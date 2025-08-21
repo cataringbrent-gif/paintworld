@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<!-- saved from url=(0046)file:///C:/Users/brent/maptiler-map/index.html -->
+<html lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-16LE">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapTiler Grid Overlay</title>
+    <!-- Use CDN for MapLibre GL JS and CSS -->
+    <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet">
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        /* Blue rounded rectangle in top right */
+        .blue-rectangle {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            width: 220px;
+            height: 100px;
+            background: rgba(255,255,255,0.85);
+            border: 2.5px solid #3498ff;
+            border-radius: 18px;
+            box-shadow: 0 2px 12px rgba(52,152,255,0.08);
+            z-index: 1200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .username-label {
+            font-size: 1.25rem;
+            color: #3498ff;
+            font-weight: 700;
+            letter-spacing: 1px;
+            user-select: text;
+        }
+        
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        #map {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+        
+        
+
+        /* Search bar styles */
+        .search-container {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            width: 300px;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            font-size: 14px;
+            outline: none;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .search-box:focus {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            margin-top: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .search-result {
+            padding: 12px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s ease;
+        }
+
+        .search-result:last-child {
+            border-bottom: none;
+        }
+
+        .search-result:hover {
+            background-color: #f8f9fa;
+        }
+
+        .search-result .place-name {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 2px;
+        }
+
+        .search-result .place-details {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .loading {
+            padding: 12px 16px;
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+
+        /* Hide MapTiler attribution and other map controls */
+        .maplibregl-ctrl-attrib {
+            display: none !important;
+        }
+        
+        .maplibregl-ctrl-attrib-button {
+            display: none !important;
+        }
+        
+        .maplibregl-ctrl-bottom-right {
+            display: none !important;
+        }
+        
+        .maplibregl-ctrl-bottom-left {
+            display: none !important;
+        }
+
+        /* Palette button and color palette styles */
+        .palette-button {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            border: none;
+            padding: 20px 32px;
+            border-radius: 16px;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 200px;
+            justify-content: center;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .palette-button:hover {
+            background: rgba(255, 255, 255, 1);
+            transform: translateX(-50%) translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+            border-color: rgba(0, 0, 0, 0.1);
+        }
+
+        .palette-button:active {
+            transform: translateX(-50%) translateY(-2px);
+        }
+
+        .palette-icon {
+            width: 24px;
+            height: 24px;
+            background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .cell-counter {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2000;
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+
+        .notification.show {
+            opacity: 1;
+        }
+
+        .color-palette {
+            position: fixed;
+            bottom: 80px;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 16px 20px;
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            margin: 0 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        .color-palette.visible {
+            display: flex;
+        }
+
+        .palette-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+        }
+
+        .palette-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .palette-close {
+            background: rgba(0, 0, 0, 0.1);
+            color: #666;
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .palette-close:hover {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+
+
+        .color-swatches-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 5px 0;
+        }
+
+        .color-row {
+            display: flex;
+            flex-direction: row;
+            gap: 12px;
+            justify-content: space-evenly;
+            width: 100%;
+        }
+
+        .paint-button {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3);
+            min-width: 180px;
+        }
+
+        .paint-button:hover {
+            transform: translateX(-50%) translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .paint-button:active {
+            transform: translateX(-50%) translateY(0);
+        }
+
+
+
+        .color-palette.visible {
+            display: flex;
+        }
+
+        .color-swatch {
+            width: 52px;
+            height: 52px;
+            border-radius: 12px;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: all 0.3s ease;
+            position: relative;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .color-swatch:hover {
+            transform: scale(1.15);
+            border-color: rgba(0, 0, 0, 0.3);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .color-swatch.selected {
+            border-color: #667eea;
+            border-width: 4px;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+        }
+
+        .color-swatch.selected::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.8);
+        }
+
+        /* Pixel info box shown when not in paint mode */
+        .pixel-info {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1001;
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 14px 18px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+            display: none;
+            align-items: center;
+            gap: 12px;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(20px);
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .pixel-close {
+            background: rgba(0, 0, 0, 0.08);
+            color: #666;
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .pixel-close:hover {
+            background: rgba(0, 0, 0, 0.18);
+        }
+
+        .g_id_signin.centered {
+            display: flex !important;
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            z-index: 2000 !important;
+            background: white;
+            padding: 32px 40px;
+            border-radius: 18px;
+            box-shadow: 0 8px 32px rgba(52,152,255,0.18);
+        }
+        .g_id_signin {
+            display: none !important;
+        }
+        
+    </style>
+</head>
+<body>
+    <div id="userBox" style="display:none; position:fixed; top:20px; right:20px; align-items:center; justify-content:center; flex-direction:row; padding:0; width:auto; height:auto; background:transparent; box-shadow:none; border:none; z-index:1200;">
+        <img id="profilePic" src="https://www.gravatar.com/avatar/?d=mp" alt="Profile" style="display:none; width:36px; height:36px; border-radius:50%; object-fit:cover; border:2px solid #3498ff; cursor:pointer;" />
+        <button id="loginButton" style="display:none; padding:12px 16px; border-radius:18px; border:none; background:#3498ff; color:#fff; font-weight:600; font-size:14px; box-shadow:0 2px 8px rgba(52,152,255,0.18); cursor:pointer; outline:none; transition:box-shadow 0.2s; min-width:100px; text-align:center;">
+            Log In
+        </button>
+    </div>
+    <div id="profileDropdown" style="display:none; position:fixed; top:68px; right:20px; width:220px; background:#fff; border-radius:16px; box-shadow:0 8px 32px rgba(52,152,255,0.18); z-index:1300; padding:20px 18px 18px 18px; flex-direction:column; align-items:center; gap:16px;">
+        <button id="closeProfileDropdown" style="position:absolute; top:8px; right:10px; background:none; border:none; color:#888; font-size:1.5rem; font-weight:bold; cursor:pointer;">×</button>
+        <img id="dropdownProfilePic" src="https://www.gravatar.com/avatar/?d=mp" alt="Profile" style="width:54px; height:54px; border-radius:50%; object-fit:cover; border:2px solid #3498ff; margin-bottom:8px;" />
+        <span id="dropdownUsername" style="font-size:1.1rem; font-weight:600; color:#3498ff; text-align:center; margin-bottom:8px; word-break:break-all;"></span>
+        <button id="logoutButton" style="background:#3498ff; color:#fff; border:none; border-radius:8px; padding:10px 0; font-size:1rem; font-weight:600; cursor:pointer; width:100%;">Log Out</button>
+    </div>
+
+    <!-- Google Sign-In button -->
+<div id="g_id_onload"
+     data-client_id="870171463231-1odtap5723pe7j0o71i7pjc1galpnv8q.apps.googleusercontent.com"
+     data-callback="onGoogleSignIn"
+     data-auto_prompt="false">
+</div>
+<div class="g_id_signin"
+     data-type="standard"
+     data-size="large"
+     data-theme="outline"
+     data-text="sign_in_with"
+     data-shape="rectangular"
+     data-logo_alignment="left">
+</div>
+
+    <div id="map" class="maplibregl-map"><div class="maplibregl-canvas-container maplibregl-interactive maplibregl-touch-drag-pan maplibregl-touch-zoom-rotate"><canvas class="maplibregl-canvas" tabindex="0" aria-label="Map" role="region" width="1912" height="954" style="width: 1912px; height: 954px;"></canvas></div><div class="maplibregl-control-container"><div class="maplibregl-ctrl-top-left "></div><div class="maplibregl-ctrl-top-right "></div><div class="maplibregl-ctrl-bottom-left "></div><div class="maplibregl-ctrl-bottom-right "><details class="maplibregl-ctrl maplibregl-ctrl-attrib" open=""><summary class="maplibregl-ctrl-attrib-button" title="Toggle attribution" aria-label="Toggle attribution"></summary><div class="maplibregl-ctrl-attrib-inner"><a href="https://www.maptiler.com/copyright/" target="_blank">© MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap contributors</a></div></details></div></div></div>
+    
+    <!-- Search bar -->
+    <div class="search-container">
+        <input type="text" class="search-box" placeholder="Search for a place..." id="searchInput">
+        <div class="search-results" id="searchResults" style="display: none;"></div>
+    </div>
+    
+    
+    
+    <!-- Notification for max cells reached -->
+    <div class="notification" id="notification">No more charges</div>
+    
+    <!-- Paint button -->
+    <button class="paint-button" id="paintButton" style="display:flex; align-items:center; justify-content:center; background:#3498ff; color:#fff; border:none; border-radius:24px; padding:14px 24px; font-size:1.25rem; font-weight:700; box-shadow:0 2px 12px rgba(52,152,255,0.18); cursor:pointer; min-width:120px; gap:8px;">
+    <span style="font-size:1.3em; margin-right:6px;">🖌️</span>
+        <span id="paintButtonText">Paint</span>
+    </button>
+
+    <!-- Pixel info box (shown when user clicks without paint mode) -->
+    <div class="pixel-info" id="pixelInfo" style="display: none;">
+        <span id="pixelInfoText">Pixel: 1132, 2809</span>
+        <button class="pixel-close" id="pixelClose">×</button>
+    </div>
+
+    <!-- Color palette -->
+    <div class="color-palette" id="colorPalette">
+        <div class="palette-header">
+            <div class="palette-title">
+                <span>⬜</span>
+                <span>Paint pixel (1)</span>
+            </div>
+            <button class="palette-close" id="paletteClose">×</button>
+        </div>
+        <div class="color-swatches-container" id="colorSwatchesContainer">
+            <div class="color-row" id="colorRow1"><div class="color-swatch" data-color="#6D001A" style="background-color: rgb(109, 0, 26);"></div><div class="color-swatch" data-color="#BE0039" style="background-color: rgb(190, 0, 57);"></div><div class="color-swatch" data-color="#FF4500" style="background-color: rgb(255, 69, 0);"></div><div class="color-swatch" data-color="#FFA800" style="background-color: rgb(255, 168, 0);"></div><div class="color-swatch" data-color="#FFD635" style="background-color: rgb(255, 214, 53);"></div><div class="color-swatch" data-color="#FFF8B8" style="background-color: rgb(255, 248, 184);"></div><div class="color-swatch" data-color="#00A368" style="background-color: rgb(0, 163, 104);"></div><div class="color-swatch" data-color="#00CC78" style="background-color: rgb(0, 204, 120);"></div><div class="color-swatch" data-color="#7EED56" style="background-color: rgb(126, 237, 86);"></div><div class="color-swatch selected" data-color="#00756F" style="background-color: rgb(0, 117, 111);"></div><div class="color-swatch" data-color="#009EAA" style="background-color: rgb(0, 158, 170);"></div><div class="color-swatch" data-color="#00CCC0" style="background-color: rgb(0, 204, 192);"></div><div class="color-swatch" data-color="#2450A4" style="background-color: rgb(36, 80, 164);"></div><div class="color-swatch" data-color="#3690EA" style="background-color: rgb(54, 144, 234);"></div><div class="color-swatch" data-color="#51E9F4" style="background-color: rgb(81, 233, 244);"></div><div class="color-swatch" data-color="#493AC1" style="background-color: rgb(73, 58, 193);"></div><div class="color-swatch" data-color="#6A5CFF" style="background-color: rgb(106, 92, 255);"></div><div class="color-swatch" data-color="#811E9F" style="background-color: rgb(129, 30, 159);"></div><div class="color-swatch" data-color="#B44AC0" style="background-color: rgb(180, 74, 192);"></div><div class="color-swatch" data-color="#FF3881" style="background-color: rgb(255, 56, 129);"></div></div>
+            <div class="color-row" id="colorRow2"><div class="color-swatch" data-color="#FF99AA" style="background-color: rgb(255, 153, 170);"></div><div class="color-swatch" data-color="#6D482F" style="background-color: rgb(109, 72, 47);"></div><div class="color-swatch" data-color="#9C6926" style="background-color: rgb(156, 105, 38);"></div><div class="color-swatch" data-color="#FFB470" style="background-color: rgb(255, 180, 112);"></div><div class="color-swatch" data-color="#000000" style="background-color: rgb(0, 0, 0);"></div><div class="color-swatch" data-color="#515252" style="background-color: rgb(81, 82, 82);"></div><div class="color-swatch" data-color="#898D90" style="background-color: rgb(137, 141, 144);"></div><div class="color-swatch" data-color="#D4D7D9" style="background-color: rgb(212, 215, 217);"></div><div class="color-swatch" data-color="#FFFFFF" style="background-color: rgb(255, 255, 255);"></div><div class="color-swatch" data-color="#FF6B6B" style="background-color: rgb(255, 107, 107);"></div><div class="color-swatch" data-color="#4ECDC4" style="background-color: rgb(78, 205, 196);"></div><div class="color-swatch" data-color="#45B7D1" style="background-color: rgb(69, 183, 209);"></div><div class="color-swatch" data-color="#96CEB4" style="background-color: rgb(150, 206, 180);"></div><div class="color-swatch" data-color="#FFEAA7" style="background-color: rgb(255, 234, 167);"></div><div class="color-swatch" data-color="#DDA0DD" style="background-color: rgb(221, 160, 221);"></div><div class="color-swatch" data-color="#98D8C8" style="background-color: rgb(152, 216, 200);"></div><div class="color-swatch" data-color="#F7DC6F" style="background-color: rgb(247, 220, 111);"></div><div class="color-swatch" data-color="#BB8FCE" style="background-color: rgb(187, 143, 206);"></div><div class="color-swatch" data-color="#85C1E9" style="background-color: rgb(133, 193, 233);"></div><div class="color-swatch" data-color="#F8C471" style="background-color: rgb(248, 196, 113);"></div></div>
+        </div>
+    </div>
+    
+            <script>
+                                // Helper to decode JWT
+                                function parseJwt(token) {
+                                        const base64Url = token.split('.')[1];
+                                        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                                        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+                                                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                                        }).join(''));
+                                        return JSON.parse(jsonPayload);
+                                }
+
+                                // Initialize Firebase
+                                const firebaseConfig = {
+                                    apiKey: "AIzaSyCOvrVs3zQsmOwogheTVUICF7Dk2bJtb4g",
+                                    authDomain: "paintearth-387dd.firebaseapp.com",
+                                    databaseURL: "https://paintearth-387dd-default-rtdb.asia-southeast1.firebasedatabase.app",
+                                    projectId: "paintearth-387dd",
+                                    storageBucket: "paintearth-387dd.firebasestorage.app",
+                                    messagingSenderId: "780276302234",
+                                    appId: "1:780276302234:web:8b6b293fd0fc8351017a23",
+                                    measurementId: "G-8Z5KFCECLC"
+                                };
+                                firebase.initializeApp(firebaseConfig);
+                                const db = firebase.database();
+            // Multiplayer paint: WebSocket backend
+            // ...existing code...
+            let USER_ID = localStorage.getItem('mpaint_user_email');
+            if (!USER_ID) {
+                // fallback for not signed in
+                USER_ID = 'user-' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('mpaint_user_id', USER_ID);
+            }
+// ...existing code...
+            const ws = new WebSocket('wss://pixelearth.onrender.com');
+
+            // Store painted cells: "x,y" -> color
+                // Store painted cells: "x,y" -> { color, owner }
+                let paintedCells = new Map();
+
+            ws.addEventListener('open', () => {
+                console.log('Connected to multiplayer server');
+            });
+
+            ws.addEventListener('message', (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'init') {
+                    paintedCells.clear();
+                    msg.cells.forEach(([cellKey, color, owner]) => {
+                        paintedCells.set(cellKey, { color, owner });
+                    });
+                    updatePaintedCellsDisplay();
+                    updateCellCounter();
+                } else if (msg.type === 'update') {
+                    const cellKey = msg.x + ',' + msg.y;
+                    if (msg.color === null) {
+                        paintedCells.delete(cellKey);
+                    } else {
+                        paintedCells.set(cellKey, { color: msg.color, owner: msg.owner });
+                    }
+                    updatePaintedCellsDisplay();
+                    updateCellCounter();
+                }
+            });
+
+            // Send paint action to server
+            function paintCell(gridX, gridY, color) {
+                const cellKey = `${gridX},${gridY}`;
+                const cell = paintedCells.get(cellKey);
+
+                if (color === null) {
+                    // Only allow the owner to delete their own paint
+                    if (!cell) {
+                        // Do nothing if cell is blank
+                        return;
+                    }
+                    if (cell.owner !== USER_ID) {
+                        showNotification("You can only delete your own paint.");
+                        return;
+                    }
+                    paintedCells.delete(cellKey);
+                } else {
+                    // Check if we're at the limit
+                    if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
+                        showNotification();
+                        return;
+                    }
+                    paintedCells.set(cellKey, { color, owner: USER_ID });
+                }
+                ws.send(JSON.stringify({ type: 'paint', x: gridX, y: gridY, color: color, owner: USER_ID }));
+                updatePaintedCellsDisplay();
+                updateCellCounter();
+            }
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
+            center: [120.75754, 13.89790],
+            zoom: 7.3,
+            dragRotate: false
+        });
+
+
+
+        const CELL_SIZE_METERS = 20.0375; // 20.0375m × 20.0375m cells (exactly 2,000,000 × 2,000,000 cells worldwide)
+        const HOVER_THRESHOLD = 4000; // Show hover when viewport has 4000x4000 cells or fewer
+        
+        
+        // Painting system variables
+        const PAINTING_THRESHOLD = 4000; // Only allow painting when visible cells <= 4000x4000
+    const MAX_CELLS = 10000; // Maximum number of cells that can be painted
+        let currentHoveredCell = null;
+        let gridVisible = false;
+        let isPaintingEnabled = false;
+        let isPaintMode = false; // User must enable paint mode via paint button
+        let selectedColor = '#FF4500'; // Default color
+    // paintedCells is already declared above with WebSocket logic
+        let isSpacePressed = false; // Track if spacebar is held down
+        let isRightMouseDown = false; // Track if right mouse button is held down
+        let defaultNotificationText = null; // Store default notification text
+        let lastSelectedCell = null; // Remember last painted/selected cell
+        let isAutoZooming = false; // Prevent recursive zoom triggers
+        let hasAutoZoomedThisSession = false; // Only auto-zoom once per palette open
+        
+        // Color palette (expanded for equal rows)
+        const colorPalette = [
+            '#6D001A', '#BE0039', '#FF4500', '#FFA800', '#FFD635', '#FFF8B8', '#00A368', '#00CC78',
+            '#7EED56', '#00756F', '#009EAA', '#00CCC0', '#2450A4', '#3690EA', '#51E9F4', '#493AC1',
+            '#6A5CFF', '#811E9F', '#B44AC0', '#FF3881', '#FF99AA', '#6D482F', '#9C6926', '#FFB470',
+            '#000000', '#515252', '#898D90', '#D4D7D9', '#FFFFFF', '#FF6B6B', '#4ECDC4', '#45B7D1',
+            '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471'
+        ];
+
+        // Convert geographic coordinates (EPSG:4326) to Web Mercator (EPSG:3857)
+        function toWebMercator(lng, lat) {
+            const x = lng * 20037508.34 / 180;
+            const y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+            const yMercator = y * 20037508.34 / 180;
+            return { x: x, y: yMercator };
+        }
+
+        // Convert Web Mercator (EPSG:3857) to geographic coordinates (EPSG:4326)
+        function fromWebMercator(x, y) {
+            const lng = x * 180 / 20037508.34;
+            const lat = Math.atan(Math.exp(y * Math.PI / 20037508.34)) * 2 - Math.PI / 2;
+            const latDegrees = lat * 180 / Math.PI;
+            return { lng: lng, lat: latDegrees };
+        }
+
+        // Convert screen coordinates to grid coordinates (normalized to 0-1,999,999 range)
+        function screenToGrid(screenX, screenY) {
+            const mapPoint = map.unproject([screenX, screenY]);
+            const mercatorPoint = toWebMercator(mapPoint.lng, mapPoint.lat);
+            
+            // Convert to normalized grid coordinates (0 to 1,999,999)
+            // Web Mercator range: -20037508.34 to +20037508.34 meters
+            const normalizedX = Math.floor((mercatorPoint.x + 20037508.34) / CELL_SIZE_METERS);
+            const normalizedY = Math.floor((mercatorPoint.y + 20037508.34) / CELL_SIZE_METERS);
+            
+            // Clamp to valid range
+            const gridX = Math.max(0, Math.min(1999999, normalizedX));
+            const gridY = Math.max(0, Math.min(1999999, normalizedY));
+            
+            return { x: gridX, y: gridY };
+        }
+
+        // Convert grid coordinates to geographic coordinates (from normalized 0-1,999,999 range)
+        function gridToGeo(gridX, gridY) {
+            // Convert normalized grid coordinates back to EPSG:3857 meters
+            // Web Mercator range: -20037508.34 to +20037508.34 meters
+            const mercatorX = (gridX * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorY = (gridY * CELL_SIZE_METERS) - 20037508.34;
+            
+            // Convert back to EPSG:4326
+            const geoPoint = fromWebMercator(mercatorX, mercatorY);
+            return [geoPoint.lng, geoPoint.lat];
+        }
+
+        // Get grid cell size in meters (always 2m × 2m)
+        function getGridCellSize() {
+            return { meters: CELL_SIZE_METERS };
+        }
+
+        // Calculate how many grid cells are visible in the current viewport
+        function getVisibleGridCells() {
+            const bounds = map.getBounds();
+            
+            // Convert bounds to EPSG:3857
+            const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
+            const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
+            
+            // Convert to normalized grid coordinates (0 to 1,999,999)
+            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            
+            const cellsX = endGridX - startGridX;
+            const cellsY = endGridY - startGridY;
+            
+            return { x: cellsX, y: cellsY };
+        }
+
+        // Generate grid lines for the current viewport
+        function generateGridLines() {
+            const bounds = map.getBounds();
+            
+            // Convert bounds to EPSG:3857
+            const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
+            const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
+            
+            // Convert to normalized grid coordinates (0 to 1,999,999)
+            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            
+            const features = [];
+            
+            // Generate vertical lines (using normalized grid coordinates)
+            for (let x = startGridX; x <= endGridX; x++) {
+                // Convert normalized grid coordinate back to EPSG:3857 meters
+                const mercatorX = (x * CELL_SIZE_METERS) - 20037508.34;
+                const geoPoint1 = fromWebMercator(mercatorX, swMercator.y);
+                const geoPoint2 = fromWebMercator(mercatorX, neMercator.y);
+                
+                features.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [
+                            [geoPoint1.lng, geoPoint1.lat],
+                            [geoPoint2.lng, geoPoint2.lat]
+                        ]
+                    },
+                    properties: { gridX: x, type: 'vertical' }
+                });
+            }
+            
+            // Generate horizontal lines (using normalized grid coordinates)
+            for (let y = startGridY; y <= endGridY; y++) {
+                // Convert normalized grid coordinate back to EPSG:3857 meters
+                const mercatorY = (y * CELL_SIZE_METERS) - 20037508.34;
+                const geoPoint1 = fromWebMercator(swMercator.x, mercatorY);
+                const geoPoint2 = fromWebMercator(neMercator.x, mercatorY);
+                
+                features.push({
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [
+                            [geoPoint1.lng, geoPoint1.lat],
+                            [geoPoint2.lng, geoPoint2.lat]
+                        ]
+                    },
+                    properties: { gridY: y, type: 'horizontal' }
+                });
+            }
+            
+            return features;
+        }
+
+        // Generate hover cell polygon
+        function generateHoverCell(gridX, gridY) {
+            // Convert normalized grid coordinates to EPSG:3857 meters
+            const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
+            
+            // Convert corners back to EPSG:4326
+            const corner1 = fromWebMercator(mercatorX1, mercatorY1);
+            const corner2 = fromWebMercator(mercatorX2, mercatorY1);
+            const corner3 = fromWebMercator(mercatorX2, mercatorY2);
+            const corner4 = fromWebMercator(mercatorX1, mercatorY2);
+            
+            return {
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [[
+                        [corner1.lng, corner1.lat],
+                        [corner2.lng, corner2.lat],
+                        [corner3.lng, corner3.lat],
+                        [corner4.lng, corner4.lat],
+                        [corner1.lng, corner1.lat]
+                    ]]
+                },
+                properties: { gridX, gridY }
+            };
+        }
+
+        // Update grid visibility based on viewport
+        function updateGridVisibility() {
+            const visibleCells = getVisibleGridCells();
+            const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
+            
+            if (shouldShowGrid !== gridVisible) {
+                gridVisible = shouldShowGrid;
+                
+                if (gridVisible) {
+                    // Only show hover layer (grid lines remain hidden)
+                    if (map.getLayer('grid-hover')) {
+                        map.setLayoutProperty('grid-hover', 'visibility', 'visible');
+                    }
+                } else {
+                    // Hide hover layer
+                    if (map.getLayer('grid-hover')) {
+                        map.setLayoutProperty('grid-hover', 'visibility', 'none');
+                    }
+                    // Clear hover
+                    if (currentHoveredCell) {
+                        map.getSource('grid-hover').setData({
+                            type: 'FeatureCollection',
+                            features: []
+                        });
+                        currentHoveredCell = null;
+                    }
+                }
+            }
+        }
+
+        // Update grid data
+        function updateGrid() {
+            if (!gridVisible) return;
+            
+            // Grid lines are not rendered, so we don't need to update them
+            // Only hover functionality is active
+        }
+
+        // Calculate wrapped coordinates (0-3999 range)
+        function getWrappedCoordinates(worldX, worldY) {
+            const displayX = worldX % 4000;
+            const displayY = worldY % 4000;
+            return { x: displayX, y: displayY };
+        }
+        
+        // ...existing code...
+        
+        function getCellColor(gridX, gridY) {
+                const cellKey = `${gridX},${gridY}`;
+                const cell = paintedCells.get(cellKey);
+                return cell ? cell.color : null;
+        }
+        
+        function updatePaintedCellsDisplay() {
+                if (!map.getSource('painted-cells')) return;
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
+                });
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
+        }
+        
+        function updateCellCounter() {
+            // No number needed, just keep the button text as 'Paint'
+        }
+        
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            if (!notification) return;
+            if (defaultNotificationText === null) {
+                defaultNotificationText = notification.textContent;
+            }
+            if (message) {
+                notification.textContent = message;
+            }
+            notification.classList.add('show');
+            
+            // Hide notification after 3 seconds and restore default text if we changed it
+            setTimeout(() => {
+                notification.classList.remove('show');
+                if (message) {
+                    notification.textContent = defaultNotificationText;
+                }
+            }, 3000);
+        }
+        
+        function checkPaintingEnabled() {
+            const visibleCells = getVisibleGridCells();
+            isPaintingEnabled = visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD;
+            return isPaintingEnabled;
+        }
+
+        // Check if the color palette is currently visible
+        function isPaletteVisible() {
+            const paletteEl = document.getElementById('colorPalette');
+            return !!paletteEl && paletteEl.classList.contains('visible');
+        }
+
+        // Get cell center lng/lat for a grid cell
+        function getCellCenterLngLat(gridX, gridY) {
+            const [lng, lat] = gridToGeo(gridX + 0.5, gridY + 0.5);
+            return [lng, lat];
+        }
+
+        // Auto-zoom to target cell so viewport shows roughly targetCells x targetCells
+        function autoZoomToCell(gridX, gridY, targetCells = 60) {
+            const center = getCellCenterLngLat(gridX, gridY);
+            const currentZoom = map.getZoom();
+            const visibleCells = getVisibleGridCells();
+            const ratioX = visibleCells.x / targetCells;
+            const ratioY = visibleCells.y / targetCells;
+            const worstRatio = Math.max(ratioX, ratioY);
+            const delta = Math.ceil(Math.log2(Math.max(worstRatio, 1)));
+            const maxZoom = typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : 22;
+            const targetZoom = Math.min(currentZoom + delta, maxZoom);
+
+            isAutoZooming = true;
+            map.flyTo({ center: center, zoom: targetZoom, duration: 800 });
+            map.once('moveend', () => {
+                isAutoZooming = false;
+            });
+        }
+
+        // Handle mouse move for hover
+        function handleMouseMove(e) {
+            if (!gridVisible) return;
+            
+            const gridCoords = screenToGrid(e.point.x, e.point.y);
+            
+            // Get wrapped coordinates for display (0-3999 range)
+            const wrappedCoords = getWrappedCoordinates(gridCoords.x, gridCoords.y);
+            
+            // No bottom-left coordinate display
+            
+            // Check if painting is enabled (zoom level check)
+            checkPaintingEnabled();
+            
+            // Only highlight cells when zoomed in enough (visible area <= 4000 × 4000 cells)
+            const visibleCells = getVisibleGridCells();
+            const shouldHighlight = visibleCells.x <= 4000 && visibleCells.y <= 4000;
+            
+            if (shouldHighlight) {
+                // Update hover cell (still using full world coordinates for rendering)
+                if (currentHoveredCell?.x !== gridCoords.x || currentHoveredCell?.y !== gridCoords.y) {
+                    currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
+                    
+                    const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
+                    map.getSource('grid-hover').setData({
+                        type: 'FeatureCollection',
+                        features: [hoverCell]
+                    });
+                    
+                    // Swipe paint when space is held down (only when palette is visible and a cell is highlighted)
+                    if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
+                        paintCell(gridCoords.x, gridCoords.y, selectedColor);
+                    }
+                    
+                    // Swipe delete when right mouse is held down (only when palette is visible and a cell is highlighted)
+                    if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
+                        paintCell(gridCoords.x, gridCoords.y, null);
+                    }
+                }
+            } else {
+                // Clear hover when zoomed out too far
+                if (currentHoveredCell) {
+                    map.getSource('grid-hover').setData({
+                        type: 'FeatureCollection',
+                        features: []
+                    });
+                    currentHoveredCell = null;
+                }
+            }
+        }
+
+        // Handle mouse leave
+        function handleMouseLeave() {
+            if (currentHoveredCell) {
+                map.getSource('grid-hover').setData({
+                    type: 'FeatureCollection',
+                    features: []
+                });
+                currentHoveredCell = null;
+            }
+            // Reset mouse button states when leaving map
+            isRightMouseDown = false;
+        }
+        
+        // Handle mouse clicks for painting
+        function handleMouseClick(e) {
+            // Determine grid coordinates from current hover or click location
+            const gridCoords = currentHoveredCell || screenToGrid(e.point.x, e.point.y);
+
+            // If palette is not visible, show pixel info box and do nothing else
+            if (!isPaletteVisible()) {
+                // Only allow selection when viewport shows <= 4000 x 4000 cells (same as hover highlight)
+                const visibleCells = getVisibleGridCells();
+                const canSelect = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
+                if (!canSelect) {
+                    const pixelInfo = document.getElementById('pixelInfo');
+                    if (pixelInfo) pixelInfo.style.display = 'none';
+                    // Show notice to zoom in
+                    showNotification('Zoom in to select a pixel');
+                    return;
+                }
+                const wrapped = getWrappedCoordinates(gridCoords.x, gridCoords.y);
+                showPixelInfo(wrapped.x, wrapped.y);
+                return;
+            }
+
+            // Palette is visible; respect zoom/visible-cells threshold
+            if (!isPaintingEnabled) return;
+
+            // Only allow painting if a cell is highlighted (hover active)
+            if (!currentHoveredCell) return;
+
+            if (e.originalEvent.button === 0) { // Left click - paint
+                paintCell(gridCoords.x, gridCoords.y, selectedColor);
+            } else if (e.originalEvent.button === 2) { // Right click - delete
+                paintCell(gridCoords.x, gridCoords.y, null);
+            }
+
+            // Remember last selected cell and zoom in to ~60x60 for better visibility
+            lastSelectedCell = { x: gridCoords.x, y: gridCoords.y };
+            const vc = getVisibleGridCells();
+            if (!hasAutoZoomedThisSession && (vc.x > 60 || vc.y > 60)) {
+                hasAutoZoomedThisSession = true;
+                autoZoomToCell(gridCoords.x, gridCoords.y, 60);
+            }
+        }
+        
+        // Prevent context menu on right click
+        function handleContextMenu(e) {
+            e.preventDefault();
+        }
+        
+        // Handle mouse down for swipe deletion
+        function handleMouseDown(e) {
+            if (e.originalEvent.button === 2) { // Right mouse button
+                isRightMouseDown = true;
+            }
+        }
+        
+        // Handle mouse up for swipe deletion
+        function handleMouseUp(e) {
+            if (e.originalEvent.button === 2) { // Right mouse button
+                isRightMouseDown = false;
+            }
+        }
+
+        // Initialize grid when map loads
+        map.on('load', () => {
+            console.log('Map loaded successfully');
+            
+            // Add grid lines source and layer
+            map.addSource('grid-lines', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: []
+                }
+            });
+            
+            map.addLayer({
+                id: 'grid-lines',
+                type: 'line',
+                source: 'grid-lines',
+                paint: {
+                    'line-color': 'rgba(255, 255, 255, 0.3)',
+                    'line-width': 1
+                },
+                layout: {
+                    visibility: 'none'
+                }
+            });
+            
+            // Add grid hover source and layer
+            map.addSource('grid-hover', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: []
+                }
+            });
+            
+            map.addLayer({
+                id: 'grid-hover',
+                type: 'fill',
+                source: 'grid-hover',
+                paint: {
+                    'fill-color': 'rgba(255, 255, 255, 0.3)',
+                    'fill-outline-color': 'rgba(0, 0, 0, 0.8)'
+                },
+                layout: {
+                    visibility: 'none'
+                }
+            });
+            
+            // Add painted cells source and layer
+            map.addSource('painted-cells', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: []
+                }
+            });
+            
+            map.addLayer({
+                id: 'painted-cells',
+                type: 'fill',
+                source: 'painted-cells',
+                paint: {
+                    'fill-color': ['get', 'color'],
+                    'fill-opacity': 0.8,
+                    'fill-outline-color': 'transparent'
+                },
+                layout: {
+                    visibility: 'visible'
+                }
+            });
+            
+            // Initial grid update
+            updateGridVisibility();
+            updateGrid();
+        });
+
+        // Event listeners
+        map.on('move', () => {
+            updateGridVisibility();
+            updateGrid();
+        });
+
+        map.on('zoom', () => {
+            updateGridVisibility();
+            updateGrid();
+        });
+
+        map.on('mousemove', handleMouseMove);
+        map.on('mouseleave', handleMouseLeave);
+        map.on('click', handleMouseClick);
+        map.on('contextmenu', handleContextMenu);
+        map.on('mousedown', handleMouseDown);
+        map.on('mouseup', handleMouseUp);
+
+        // Keyboard event listeners for spacebar swipe painting
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !isSpacePressed) {
+                e.preventDefault(); // Prevent page scrolling
+                isSpacePressed = true;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') {
+                isSpacePressed = false;
+            }
+        });
+
+        // Search functionality
+        const searchInput = document.getElementById('searchInput');
+        const searchResults = document.getElementById('searchResults');
+        let searchTimeout;
+
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.trim();
+            
+            // Clear previous timeout
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+
+            // Hide results if query is empty
+            if (query.length === 0) {
+                searchResults.style.display = 'none';
+                return;
+            }
+
+            // Debounce search requests
+            searchTimeout = setTimeout(() => {
+                searchPlaces(query);
+            }, 300);
+        });
+
+        // Close search results when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-container')) {
+                searchResults.style.display = 'none';
+            }
+        });
+
+        async function searchPlaces(query) {
+            try {
+                // Show loading state
+                searchResults.innerHTML = '<div class="loading">Searching...</div>';
+                searchResults.style.display = 'block';
+
+                // Use MapTiler Geocoding API
+                const response = await fetch(
+                    `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=cnLd5cDF8MjR4DD1YOHi&limit=5`
+                );
+
+                if (!response.ok) {
+                    throw new Error('Geocoding request failed');
+                }
+
+                const data = await response.json();
+                
+                if (data.features && data.features.length > 0) {
+                    displaySearchResults(data.features);
+                } else {
+                    searchResults.innerHTML = '<div class="loading">No places found</div>';
+                }
+            } catch (error) {
+                console.error('Search error:', error);
+                searchResults.innerHTML = '<div class="loading">Search failed</div>';
+            }
+        }
+
+        function displaySearchResults(features) {
+            searchResults.innerHTML = '';
+            
+            features.forEach(feature => {
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'search-result';
+                
+                const placeName = document.createElement('div');
+                placeName.className = 'place-name';
+                placeName.textContent = feature.place_name || feature.text || 'Unknown location';
+                
+                const placeDetails = document.createElement('div');
+                placeDetails.className = 'place-details';
+                placeDetails.textContent = feature.context ? 
+                    feature.context.map(ctx => ctx.text).join(', ') : 
+                    `${feature.center[1].toFixed(4)}, ${feature.center[0].toFixed(4)}`;
+                
+                resultDiv.appendChild(placeName);
+                resultDiv.appendChild(placeDetails);
+                
+                resultDiv.addEventListener('click', () => {
+                    // Fly to the selected location
+                    map.flyTo({
+                        center: feature.center,
+                        zoom: Math.max(map.getZoom(), 10),
+                        duration: 2000
+                    });
+                    
+                    // Hide search results
+                    searchResults.style.display = 'none';
+                    searchInput.value = feature.place_name || feature.text || 'Unknown location';
+                });
+                
+                searchResults.appendChild(resultDiv);
+            });
+            
+            searchResults.style.display = 'block';
+        }
+
+        map.on('error', (e) => {
+            console.error('Map error:', e);
+        });
+        
+        // Initialize palette functionality
+        function initializePalette() {
+            const colorRow1 = document.getElementById('colorRow1');
+            const colorRow2 = document.getElementById('colorRow2');
+            const paletteCloseButton = document.getElementById('paletteClose');
+            const paintButton = document.getElementById('paintButton');
+            const pixelInfo = document.getElementById('pixelInfo');
+            const pixelInfoText = document.getElementById('pixelInfoText');
+            const pixelClose = document.getElementById('pixelClose');
+            
+            // Generate color swatches in two rows
+            colorRow1.innerHTML = '';
+            colorRow2.innerHTML = '';
+            
+            colorPalette.forEach((color, index) => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.dataset.color = color;
+                
+                // Mark default color as selected
+                if (color === selectedColor) {
+                    swatch.classList.add('selected');
+                }
+                
+                swatch.addEventListener('click', () => {
+                    // Remove previous selection
+                    document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
+                    // Select new color
+                    swatch.classList.add('selected');
+                    selectedColor = color;
+                });
+                
+                // Distribute colors equally between two rows (20 colors per row)
+                if (index < 20) {
+                    colorRow1.appendChild(swatch);
+                } else {
+                    colorRow2.appendChild(swatch);
+                }
+            });
+            
+            // Toggle color palette when paint button is clicked and enable paint mode
+            paintButton.addEventListener('click', () => {
+                // Check if user is signed in
+                if (!localStorage.getItem('mpaint_user_email')) {
+                    showNotification('Log in with Google');
+                    return;
+                }
+                const colorPalette = document.getElementById('colorPalette');
+                colorPalette.classList.toggle('visible');
+                isPaintMode = true;
+                // If pixel info was visible, hide it when entering paint mode
+                if (pixelInfo) pixelInfo.style.display = 'none';
+                // Ensure paint button stays visible in paint mode
+                paintButton.style.display = 'flex';
+                // Reset one-time auto-zoom flag on opening palette
+                if (colorPalette.classList.contains('visible')) {
+                    hasAutoZoomedThisSession = false;
+                }
+            });
+            
+            // Close palette with X button
+            paletteCloseButton.addEventListener('click', () => {
+                document.getElementById('colorPalette').classList.remove('visible');
+            });
+
+            // Close pixel info and bring back paint button
+            pixelClose.addEventListener('click', () => {
+                pixelInfo.style.display = 'none';
+                paintButton.style.display = 'flex';
+            });
+
+            // Helper to show pixel info in center-bottom and hide paint button
+            window.showPixelInfo = function(x, y) {
+                if (!pixelInfo || !pixelInfoText) return;
+                // Show only pixel coordinates, no username
+                pixelInfoText.textContent = `Pixel: ${x}, ${y}`;
+                pixelInfo.style.display = 'flex';
+                paintButton.style.display = 'none';
+            };
+        }
+        
+        // Initialize palette when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            initializePalette();
+            updateCellCounter(); // Initialize the cell counter
+
+            // Always show the user box
+            document.getElementById('userBox').style.display = 'flex';
+
+            // Show profile picture if signed in, otherwise clear it
+            const name = localStorage.getItem('mpaint_user_name');
+            const pic = localStorage.getItem('mpaint_user_pic');
+            const profilePic = document.getElementById('profilePic');
+            const dropdownProfilePic = document.getElementById('dropdownProfilePic');
+            const dropdownUsername = document.getElementById('dropdownUsername');
+            const profileDropdown = document.getElementById('profileDropdown');
+            if (name && pic) {
+                profilePic.src = pic;
+                profilePic.style.display = 'block';
+                dropdownProfilePic.src = pic;
+                dropdownUsername.textContent = name;
+                profileDropdown.style.display = 'none';
+                document.querySelector('.g_id_signin').style.display = 'none';
+            } else {
+                profilePic.style.display = 'none';
+                profileDropdown.style.display = 'none';
+            }
+        // Show dropdown on profile picture click
+        profilePic.addEventListener('click', () => {
+            const name = localStorage.getItem('mpaint_user_name');
+            const pic = localStorage.getItem('mpaint_user_pic');
+            const dropdown = document.getElementById('profileDropdown');
+            if (name && pic && profilePic.style.display === 'block') {
+                if (dropdown.style.display === 'flex') {
+                    dropdown.style.display = 'none';
+                } else {
+                    dropdown.style.display = 'flex';
+                }
+            }
+        });
+
+        // Hide dropdown if clicking outside
+        document.addEventListener('mousedown', (e) => {
+            const dropdown = document.getElementById('profileDropdown');
+            const profilePic = document.getElementById('profilePic');
+            if (dropdown.style.display === 'flex' && !dropdown.contains(e.target) && e.target !== profilePic) {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        // Log out button
+        document.getElementById('logoutButton').addEventListener('click', () => {
+            localStorage.removeItem('mpaint_user_name');
+            localStorage.removeItem('mpaint_user_email');
+            localStorage.removeItem('mpaint_user_pic');
+            document.getElementById('profileDropdown').style.display = 'none';
+            document.getElementById('userBox').style.display = 'none';
+            updateLoginButton();
+            location.reload();
+        });
+
+            // Add event listener for login button
+            const loginBtn = document.getElementById('loginButton');
+            if (loginBtn) {
+                loginBtn.addEventListener('click', () => {
+                    // Show the Google button centered
+                    const googleBtn = document.querySelector('.g_id_signin');
+                    if (googleBtn) {
+                        googleBtn.classList.add('centered');
+                        googleBtn.style.display = 'flex';
+                    }
+                    });
+            }
+
+            // Hide Google button if user clicks outside it (optional)
+            document.addEventListener('click', (e) => {
+                const googleBtn = document.querySelector('.g_id_signin.centered');
+                if (googleBtn && !googleBtn.contains(e.target) && e.target.id !== 'loginButton') {
+                    googleBtn.classList.remove('centered');
+                    googleBtn.style.display = 'none';
+                }
+            });
+
+            // Make sure login button is updated
+            updateLoginButton();
+        });
+
+        // Show/hide login button and profile picture based on sign-in state
+        function updateLoginButton() {
+            const loginBtn = document.getElementById('loginButton');
+            const name = localStorage.getItem('mpaint_user_name');
+            const pic = localStorage.getItem('mpaint_user_pic');
+            const profilePic = document.getElementById('profilePic');
+            if (!loginBtn || !profilePic) return;
+            if (!name || !pic) {
+                loginBtn.style.display = 'inline-block';
+                profilePic.style.display = 'none';
+                loginBtn.textContent = 'Log In';
+            } else {
+                loginBtn.style.display = 'none';
+                profilePic.src = pic;
+                profilePic.style.display = 'block';
+            }
+        }
+
+    // Update login button after Google sign-in
+    function onGoogleSignIn(response) {
+    const userObject = parseJwt(response.credential);
+    localStorage.setItem('mpaint_user_name', userObject.name);
+    localStorage.setItem('mpaint_user_email', userObject.email);
+    localStorage.setItem('mpaint_user_pic', userObject.picture);
+    // Hide the Google button after sign-in
+    const googleBtn = document.querySelector('.g_id_signin');
+    if (googleBtn) {
+        googleBtn.classList.remove('centered');
+        googleBtn.style.display = 'none';
+    }
+    // Show profile picture
+    const profilePic = document.getElementById('profilePic');
+    if (profilePic) {
+        profilePic.src = userObject.picture;
+        profilePic.style.display = 'block';
+    }
+    document.getElementById('userBox').style.display = 'flex';
+    updateLoginButton();
+    // alert("Signed in as: " + userObject.name);
+}
+    </script>
+
+</body></html>
