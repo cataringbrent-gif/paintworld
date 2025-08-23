@@ -8,10 +8,14 @@
     <!-- Use CDN for MapLibre GL JS and CSS -->
     <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet">
     <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <!-- Supabase client -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+    <script>
+        // Hardcoded Supabase configuration
+        window.SUPABASE_URL = 'https://bfyuaujkbzqaqyhzdbxz.supabase.co';
+        window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJmeXVhdWprYnpxYXF5aHpkYnh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU5MTcyNzcsImV4cCI6MjA3MTQ5MzI3N30.904S0Y_EAUCR3XJVOun2qYB-3F__yQVBm970xfB8nrc';
+    </script>
+    
     <style>
         * {
             margin: 0;
@@ -428,54 +432,58 @@
             background: rgba(0, 0, 0, 0.18);
         }
 
-        .g_id_signin.centered {
-            display: flex !important;
-            position: fixed !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
-            z-index: 2000 !important;
-            background: white;
-            padding: 32px 40px;
-            border-radius: 18px;
-            box-shadow: 0 8px 32px rgba(52,152,255,0.18);
+        /* Supabase Config Modal */
+        .sb-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.35);
+            z-index: 3000;
+            align-items: center;
+            justify-content: center;
         }
-        .g_id_signin {
-            display: none !important;
+        .sb-modal-card {
+            width: 92%;
+            max-width: 560px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.18);
+            padding: 20px 20px 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
+        .sb-modal-card h3 { margin: 0 0 6px 0; }
+        .sb-field { display: flex; flex-direction: column; gap: 6px; }
+        .sb-input { padding: 10px 12px; border: 1px solid #e3e6eb; border-radius: 8px; font-size: 14px; }
+        .sb-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
+        .sb-btn { padding: 10px 14px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        .sb-btn.primary { background: #2f9e44; color: white; }
+        .sb-btn.secondary { background: #f1f3f5; color: #333; }
         
     </style>
 </head>
 <body>
-    <div id="userBox" style="display:none; position:fixed; top:20px; right:20px; align-items:center; justify-content:center; flex-direction:row; padding:0; width:auto; height:auto; background:transparent; box-shadow:none; border:none; z-index:1200;">
-        <img id="profilePic" src="https://www.gravatar.com/avatar/?d=mp" alt="Profile" style="display:none; width:36px; height:36px; border-radius:50%; object-fit:cover; border:2px solid #3498ff; cursor:pointer;" />
-        <button id="loginButton" style="display:none; padding:12px 16px; border-radius:18px; border:none; background:#3498ff; color:#fff; font-weight:600; font-size:14px; box-shadow:0 2px 8px rgba(52,152,255,0.18); cursor:pointer; outline:none; transition:box-shadow 0.2s; min-width:100px; text-align:center;">
-            Log In
-        </button>
-    </div>
-    <div id="profileDropdown" style="display:none; position:fixed; top:68px; right:20px; width:220px; background:#fff; border-radius:16px; box-shadow:0 8px 32px rgba(52,152,255,0.18); z-index:1300; padding:20px 18px 18px 18px; flex-direction:column; align-items:center; gap:16px;">
-        <button id="closeProfileDropdown" style="position:absolute; top:8px; right:10px; background:none; border:none; color:#888; font-size:1.5rem; font-weight:bold; cursor:pointer;">×</button>
-        <img id="dropdownProfilePic" src="https://www.gravatar.com/avatar/?d=mp" alt="Profile" style="width:54px; height:54px; border-radius:50%; object-fit:cover; border:2px solid #3498ff; margin-bottom:8px;" />
-        <span id="dropdownUsername" style="font-size:1.1rem; font-weight:600; color:#3498ff; text-align:center; margin-bottom:8px; word-break:break-all;"></span>
-        <button id="logoutButton" style="background:#3498ff; color:#fff; border:none; border-radius:8px; padding:10px 0; font-size:1rem; font-weight:600; cursor:pointer; width:100%;">Log Out</button>
+    <!-- Supabase Config Modal -->
+    <div id="supabaseConfigModal" class="sb-modal">
+      <div class="sb-modal-card">
+        <h3>Configure Supabase</h3>
+        <div class="sb-field">
+          <label for="sbUrlInput">Project URL</label>
+          <input id="sbUrlInput" class="sb-input" placeholder="https://YOUR_PROJECT.supabase.co" />
+        </div>
+        <div class="sb-field">
+          <label for="sbKeyInput">Anon Key</label>
+          <input id="sbKeyInput" class="sb-input" placeholder="eyJhbGciOi..." />
+        </div>
+        <div class="sb-actions">
+          <button id="sbCancelBtn" class="sb-btn secondary">Cancel</button>
+          <button id="sbSaveBtn" class="sb-btn primary">Save</button>
+        </div>
+      </div>
     </div>
 
-    <!-- Google Sign-In button -->
-<div id="g_id_onload"
-     data-client_id="870171463231-1odtap5723pe7j0o71i7pjc1galpnv8q.apps.googleusercontent.com"
-     data-callback="onGoogleSignIn"
-     data-auto_prompt="false">
-</div>
-<div class="g_id_signin"
-     data-type="standard"
-     data-size="large"
-     data-theme="outline"
-     data-text="sign_in_with"
-     data-shape="rectangular"
-     data-logo_alignment="left">
-</div>
-
-    <div id="map" class="maplibregl-map"><div class="maplibregl-canvas-container maplibregl-interactive maplibregl-touch-drag-pan maplibregl-touch-zoom-rotate"><canvas class="maplibregl-canvas" tabindex="0" aria-label="Map" role="region" width="1912" height="954" style="width: 1912px; height: 954px;"></canvas></div><div class="maplibregl-control-container"><div class="maplibregl-ctrl-top-left "></div><div class="maplibregl-ctrl-top-right "></div><div class="maplibregl-ctrl-bottom-left "></div><div class="maplibregl-ctrl-bottom-right "><details class="maplibregl-ctrl maplibregl-ctrl-attrib" open=""><summary class="maplibregl-ctrl-attrib-button" title="Toggle attribution" aria-label="Toggle attribution"></summary><div class="maplibregl-ctrl-attrib-inner"><a href="https://www.maptiler.com/copyright/" target="_blank">© MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap contributors</a></div></details></div></div></div>
+    <div id="map" class="maplibregl-map"><div class="maplibregl-canvas-container maplibregl-interactive maplibregl-touch-drag-pan maplibregl-touch-zoom-rotate"><canvas class="maplibregl-canvas" tabindex="0" aria-label="Map" role="region" width="1912" height="954" style="width: 1912px; height: 954px;"></canvas></div><div class="maplibregl-control-container"><div class="maplibregl-ctrl-top-left "></div><div class="maplibregl-ctrl-top-right "></div><div class="maplibregl-ctrl-bottom-left "></div><div class="maplibregl-ctrl-bottom-right "><details class="maplibregl-ctrl maplibregl-ctrl-attrib" open=""><summary class="maplibregl-ctrl-attrib-button" title="Toggle attribution" aria-label="Toggle attribution"></summary><div class="maplibregl-ctrl-attrib-inner"><a href="https://www.maptiler.com/copyright/" target="_blank"> MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank"> OpenStreetMap contributors</a></div></details></div></div></div>
     
     <!-- Search bar -->
     <div class="search-container">
@@ -516,104 +524,168 @@
     </div>
     
             <script>
-                                // Helper to decode JWT
-                                function parseJwt(token) {
-                                        const base64Url = token.split('.')[1];
-                                        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-                                        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-                                                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-                                        }).join(''));
-                                        return JSON.parse(jsonPayload);
-                                }
+            // ================= Supabase-backed persistence (polling until Realtime available) =================
+            // Config helpers: read from query params once then persist to localStorage. Anon key is public.
+            (function bootstrapSupabaseConfig(){
+              const params = new URLSearchParams(window.location.search);
+              const url = params.get('supabaseUrl');
+              const key = params.get('supabaseKey');
+              if (url && key) {
+                localStorage.setItem('supabase_url', url);
+                localStorage.setItem('supabase_anon_key', key);
+                // Clean URL params without reloading
+                const clean = new URL(window.location.href);
+                clean.searchParams.delete('supabaseUrl');
+                clean.searchParams.delete('supabaseKey');
+                window.history.replaceState({}, '', clean.toString());
+              }
+            })();
 
-                                // Initialize Firebase
-                                const firebaseConfig = {
-                                    apiKey: "AIzaSyCOvrVs3zQsmOwogheTVUICF7Dk2bJtb4g",
-                                    authDomain: "paintearth-387dd.firebaseapp.com",
-                                    databaseURL: "https://paintearth-387dd-default-rtdb.asia-southeast1.firebasedatabase.app",
-                                    projectId: "paintearth-387dd",
-                                    storageBucket: "paintearth-387dd.firebasestorage.app",
-                                    messagingSenderId: "780276302234",
-                                    appId: "1:780276302234:web:8b6b293fd0fc8351017a23",
-                                    measurementId: "G-8Z5KFCECLC"
-                                };
-                                firebase.initializeApp(firebaseConfig);
-                                const db = firebase.database();
-            // Multiplayer paint: WebSocket backend
-            // ...existing code...
-            let USER_ID = localStorage.getItem('mpaint_user_email');
-            if (!USER_ID) {
-                // fallback for not signed in
-                USER_ID = 'user-' + Math.random().toString(36).substr(2, 9);
-                localStorage.setItem('mpaint_user_id', USER_ID);
+            function getSupabaseConfig() {
+              const url = localStorage.getItem('supabase_url') || window.SUPABASE_URL;
+              const key = localStorage.getItem('supabase_anon_key') || window.SUPABASE_ANON_KEY;
+              return { url, key };
             }
-// ...existing code...
-            const ws = new WebSocket('wss://pixelearth.onrender.com');
 
-            // Store painted cells: "x,y" -> color
-                // Store painted cells: "x,y" -> { color, owner }
-                let paintedCells = new Map();
+            const cfg = getSupabaseConfig();
+            if (!cfg?.url || !cfg?.key || typeof window.supabase === 'undefined') {
+              // Show config modal to collect details, then reload
+              const modal = document.getElementById('supabaseConfigModal');
+              const urlEl = document.getElementById('sbUrlInput');
+              const keyEl = document.getElementById('sbKeyInput');
+              const saveBtn = document.getElementById('sbSaveBtn');
+              const cancelBtn = document.getElementById('sbCancelBtn');
+              if (modal) {
+                modal.style.display = 'flex';
+                // Prefill from any existing values
+                if (cfg?.url) urlEl.value = cfg.url;
+                if (cfg?.key) keyEl.value = cfg.key;
+                saveBtn.onclick = () => {
+                  const u = (urlEl.value || '').trim();
+                  const k = (keyEl.value || '').trim();
+                  if (!u || !k) return;
+                  localStorage.setItem('supabase_url', u);
+                  localStorage.setItem('supabase_anon_key', k);
+                  window.location.reload();
+                };
+                cancelBtn.onclick = () => { modal.style.display = 'none'; };
+              }
+              console.warn('Supabase not configured. Enter your details to continue.');
+            }
 
-            ws.addEventListener('open', () => {
-                console.log('Connected to multiplayer server');
-            });
+            const supabase = (cfg?.url && cfg?.key && window.supabase)
+              ? window.supabase.createClient(cfg.url, cfg.key)
+              : null;
 
-            ws.addEventListener('message', (event) => {
-                const msg = JSON.parse(event.data);
-                if (msg.type === 'init') {
-                    paintedCells.clear();
-                    msg.cells.forEach(([cellKey, color, owner]) => {
-                        paintedCells.set(cellKey, { color, owner });
-                    });
-                    updatePaintedCellsDisplay();
-                    updateCellCounter();
-                } else if (msg.type === 'update') {
-                    const cellKey = msg.x + ',' + msg.y;
-                    if (msg.color === null) {
-                        paintedCells.delete(cellKey);
-                    } else {
-                        paintedCells.set(cellKey, { color: msg.color, owner: msg.owner });
-                    }
-                    updatePaintedCellsDisplay();
-                    updateCellCounter();
-                }
-            });
+            // Current user id (from Supabase anonymous auth)
+            let USER_ID = null;
 
-            // Send paint action to server
-            function paintCell(gridX, gridY, color) {
-                const cellKey = `${gridX},${gridY}`;
-                const cell = paintedCells.get(cellKey);
+            // Store painted cells: "x,y" -> { color, owner }
+            let paintedCells = new Map();
 
-                if (color === null) {
-                    // Only allow the owner to delete their own paint
-                    if (!cell) {
-                        // Do nothing if cell is blank
-                        return;
-                    }
-                    if (cell.owner !== USER_ID) {
-                        showNotification("You can only delete your own paint.");
-                        return;
-                    }
-                    paintedCells.delete(cellKey);
-                } else {
-                    // Check if we're at the limit
-                    if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
-                        showNotification();
-                        return;
-                    }
-                    paintedCells.set(cellKey, { color, owner: USER_ID });
-                }
-                ws.send(JSON.stringify({ type: 'paint', x: gridX, y: gridY, color: color, owner: USER_ID }));
+            async function ensureAuth() {
+              if (!supabase) return null;
+              const { data: { user } } = await supabase.auth.getUser();
+              if (user) { USER_ID = user.id; return user; }
+              // Anonymous sign-in (requires Anonymous provider enabled)
+              const { data, error } = await supabase.auth.signInAnonymously();
+              if (error) { console.error('Anon sign-in failed', error); return null; }
+              USER_ID = data.user.id;
+              return data.user;
+            }
+
+            function mergeRow(row) {
+              const key = `${row.x},${row.y}`;
+              if (row.color === null) {
+                paintedCells.delete(key);
+              } else {
+                paintedCells.set(key, { color: row.color, owner: row.owner });
+              }
+            }
+
+            async function initialLoad() {
+              if (!supabase) return;
+              const { data, error } = await supabase
+                .from('paints')
+                .select('*')
+                .order('updated_at', { ascending: true });
+              if (error) { console.error('Initial load error', error); return; }
+              paintedCells.clear();
+              for (const row of data) mergeRow(row);
+              updatePaintedCellsDisplay();
+              updateCellCounter();
+            }
+
+            let lastSeen = new Date(0).toISOString();
+            async function pollUpdates() {
+              if (!supabase) return;
+              const { data, error } = await supabase
+                .from('paints')
+                .select('*')
+                .gt('updated_at', lastSeen)
+                .order('updated_at', { ascending: true });
+              if (error) { console.error('Poll error', error); return; }
+              if (data && data.length) {
+                for (const row of data) mergeRow(row);
+                lastSeen = data[data.length - 1].updated_at;
                 updatePaintedCellsDisplay();
                 updateCellCounter();
+              }
             }
-        const map = new maplibregl.Map({
-            container: 'map',
-            style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
-            center: [120.75754, 13.89790],
-            zoom: 7.3,
-            dragRotate: false
-        });
+
+            (async function startPersistence(){
+              if (!supabase) return;
+              await ensureAuth();
+              await initialLoad();
+              // Start polling every 2s until Realtime is available
+              setInterval(pollUpdates, 2000);
+            })();
+
+            // Paint action -> Supabase upsert/delete
+            async function paintCell(gridX, gridY, color) {
+              const cellKey = `${gridX},${gridY}`;
+              const cell = paintedCells.get(cellKey);
+
+              if (!supabase || !USER_ID) {
+                showNotification('Storage not configured yet');
+                return;
+              }
+
+              if (color === null) {
+                  if (!cell) return; // nothing to erase
+                  if (cell.owner !== USER_ID) {
+                      showNotification('You can only delete your own paint.');
+                      return;
+                  }
+                  // Delete row (RLS enforces ownership)
+                  const { error } = await supabase
+                    .from('paints')
+                    .delete()
+                    .eq('x', gridX)
+                    .eq('y', gridY);
+                  if (error) { console.error('Delete error', error); return; }
+                  paintedCells.delete(cellKey);
+              } else {
+                  if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
+                      showNotification();
+                      return;
+                  }
+                  const { error } = await supabase
+                    .from('paints')
+                    .upsert([{ x: gridX, y: gridY, color, owner: USER_ID }], { onConflict: 'x,y' });
+                  if (error) { console.error('Upsert error', error); return; }
+                  paintedCells.set(cellKey, { color, owner: USER_ID });
+              }
+              updatePaintedCellsDisplay();
+              updateCellCounter();
+            }
+            const map = new maplibregl.Map({
+                container: 'map',
+                style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
+                center: [120.75754, 13.89790],
+                zoom: 7.3,
+                dragRotate: false
+            });
 
 
 
@@ -622,17 +694,18 @@
         
         
         // Painting system variables
-        const PAINTING_THRESHOLD = 4000; // Only allow painting when visible cells <= 4000x4000
-    const MAX_CELLS = 10000; // Maximum number of cells that can be painted
+        const PAINTING_THRESHOLD = 1000; // Only allow painting when visible cells <= 1000x1000
+        const MAX_CELLS = 10000; // Maximum number of cells that can be painted
         let currentHoveredCell = null;
         let gridVisible = false;
         let isPaintingEnabled = false;
         let isPaintMode = false; // User must enable paint mode via paint button
         let selectedColor = '#FF4500'; // Default color
-    // paintedCells is already declared above with WebSocket logic
         let isSpacePressed = false; // Track if spacebar is held down
         let isRightMouseDown = false; // Track if right mouse button is held down
         let defaultNotificationText = null; // Store default notification text
+        let lastZoomNoticeTime = 0; // throttle zoom-out notices
+        const ZOOM_NOTICE_COOLDOWN = 1500; // ms
         let lastSelectedCell = null; // Remember last painted/selected cell
         let isAutoZooming = false; // Prevent recursive zoom triggers
         let hasAutoZoomedThisSession = false; // Only auto-zoom once per palette open
@@ -963,14 +1036,20 @@
                         features: [hoverCell]
                     });
                     
-                    // Swipe paint when space is held down (only when palette is visible and a cell is highlighted)
+                    // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
                     if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
-                        paintCell(gridCoords.x, gridCoords.y, selectedColor);
+                        const vc = getVisibleGridCells();
+                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                            paintCell(gridCoords.x, gridCoords.y, selectedColor);
+                        }
                     }
                     
-                    // Swipe delete when right mouse is held down (only when palette is visible and a cell is highlighted)
+                    // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
                     if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
-                        paintCell(gridCoords.x, gridCoords.y, null);
+                        const vc = getVisibleGridCells();
+                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                            paintCell(gridCoords.x, gridCoords.y, null);
+                        }
                     }
                 }
             } else {
@@ -1020,8 +1099,20 @@
                 return;
             }
 
-            // Palette is visible; respect zoom/visible-cells threshold
-            if (!isPaintingEnabled) return;
+            // Palette is visible; enforce painting rules based on visible cells
+            const vc = getVisibleGridCells();
+
+            // > 4000 x 4000: block and notify
+            if (vc.x > 4000 || vc.y > 4000) {
+                showNotification('Zoom in to paint');
+                return;
+            }
+
+            // Between 1000 and 4000: auto-zoom to ~100 x 100 at the target cell, do not paint yet
+            if (vc.x > 1000 || vc.y > 1000) {
+                autoZoomToCell(gridCoords.x, gridCoords.y, 100);
+                return;
+            }
 
             // Only allow painting if a cell is highlighted (hover active)
             if (!currentHoveredCell) return;
@@ -1032,13 +1123,8 @@
                 paintCell(gridCoords.x, gridCoords.y, null);
             }
 
-            // Remember last selected cell and zoom in to ~60x60 for better visibility
+            // Remember last selected cell (no extra auto-zoom here; painting allowed at <= 2000)
             lastSelectedCell = { x: gridCoords.x, y: gridCoords.y };
-            const vc = getVisibleGridCells();
-            if (!hasAutoZoomedThisSession && (vc.x > 60 || vc.y > 60)) {
-                hasAutoZoomedThisSession = true;
-                autoZoomToCell(gridCoords.x, gridCoords.y, 60);
-            }
         }
         
         // Prevent context menu on right click
@@ -1116,7 +1202,7 @@
                     features: []
                 }
             });
-            
+
             map.addLayer({
                 id: 'painted-cells',
                 type: 'fill',
@@ -1130,14 +1216,11 @@
                     visibility: 'visible'
                 }
             });
-            
-            // Initial grid update
-            updateGridVisibility();
-            updateGrid();
-        });
 
-        // Event listeners
-        map.on('move', () => {
+            // Render any preloaded paints now that the source exists
+            updatePaintedCellsDisplay();
+
+            // Initial grid update
             updateGridVisibility();
             updateGrid();
         });
@@ -1145,6 +1228,15 @@
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
+            // Throttled notice when zoomed out beyond painting capability
+            const vc = getVisibleGridCells();
+            if (vc.x > 4000 || vc.y > 4000) {
+                const now = Date.now();
+                if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
+                    showNotification('Zoomed out too far to paint. Zoom in.');
+                    lastZoomNoticeTime = now;
+                }
+            }
         });
 
         map.on('mousemove', handleMouseMove);
@@ -1314,19 +1406,11 @@
             
             // Toggle color palette when paint button is clicked and enable paint mode
             paintButton.addEventListener('click', () => {
-                // Check if user is signed in
-                if (!localStorage.getItem('mpaint_user_email')) {
-                    showNotification('Log in with Google');
-                    return;
-                }
                 const colorPalette = document.getElementById('colorPalette');
                 colorPalette.classList.toggle('visible');
                 isPaintMode = true;
-                // If pixel info was visible, hide it when entering paint mode
                 if (pixelInfo) pixelInfo.style.display = 'none';
-                // Ensure paint button stays visible in paint mode
                 paintButton.style.display = 'flex';
-                // Reset one-time auto-zoom flag on opening palette
                 if (colorPalette.classList.contains('visible')) {
                     hasAutoZoomedThisSession = false;
                 }
@@ -1357,128 +1441,9 @@
         document.addEventListener('DOMContentLoaded', () => {
             initializePalette();
             updateCellCounter(); // Initialize the cell counter
-
-            // Always show the user box
-            document.getElementById('userBox').style.display = 'flex';
-
-            // Show profile picture if signed in, otherwise clear it
-            const name = localStorage.getItem('mpaint_user_name');
-            const pic = localStorage.getItem('mpaint_user_pic');
-            const profilePic = document.getElementById('profilePic');
-            const dropdownProfilePic = document.getElementById('dropdownProfilePic');
-            const dropdownUsername = document.getElementById('dropdownUsername');
-            const profileDropdown = document.getElementById('profileDropdown');
-            if (name && pic) {
-                profilePic.src = pic;
-                profilePic.style.display = 'block';
-                dropdownProfilePic.src = pic;
-                dropdownUsername.textContent = name;
-                profileDropdown.style.display = 'none';
-                document.querySelector('.g_id_signin').style.display = 'none';
-            } else {
-                profilePic.style.display = 'none';
-                profileDropdown.style.display = 'none';
-            }
-        // Show dropdown on profile picture click
-        profilePic.addEventListener('click', () => {
-            const name = localStorage.getItem('mpaint_user_name');
-            const pic = localStorage.getItem('mpaint_user_pic');
-            const dropdown = document.getElementById('profileDropdown');
-            if (name && pic && profilePic.style.display === 'block') {
-                if (dropdown.style.display === 'flex') {
-                    dropdown.style.display = 'none';
-                } else {
-                    dropdown.style.display = 'flex';
-                }
-            }
         });
 
-        // Hide dropdown if clicking outside
-        document.addEventListener('mousedown', (e) => {
-            const dropdown = document.getElementById('profileDropdown');
-            const profilePic = document.getElementById('profilePic');
-            if (dropdown.style.display === 'flex' && !dropdown.contains(e.target) && e.target !== profilePic) {
-                dropdown.style.display = 'none';
-            }
-        });
-
-        // Log out button
-        document.getElementById('logoutButton').addEventListener('click', () => {
-            localStorage.removeItem('mpaint_user_name');
-            localStorage.removeItem('mpaint_user_email');
-            localStorage.removeItem('mpaint_user_pic');
-            document.getElementById('profileDropdown').style.display = 'none';
-            document.getElementById('userBox').style.display = 'none';
-            updateLoginButton();
-            location.reload();
-        });
-
-            // Add event listener for login button
-            const loginBtn = document.getElementById('loginButton');
-            if (loginBtn) {
-                loginBtn.addEventListener('click', () => {
-                    // Show the Google button centered
-                    const googleBtn = document.querySelector('.g_id_signin');
-                    if (googleBtn) {
-                        googleBtn.classList.add('centered');
-                        googleBtn.style.display = 'flex';
-                    }
-                    });
-            }
-
-            // Hide Google button if user clicks outside it (optional)
-            document.addEventListener('click', (e) => {
-                const googleBtn = document.querySelector('.g_id_signin.centered');
-                if (googleBtn && !googleBtn.contains(e.target) && e.target.id !== 'loginButton') {
-                    googleBtn.classList.remove('centered');
-                    googleBtn.style.display = 'none';
-                }
-            });
-
-            // Make sure login button is updated
-            updateLoginButton();
-        });
-
-        // Show/hide login button and profile picture based on sign-in state
-        function updateLoginButton() {
-            const loginBtn = document.getElementById('loginButton');
-            const name = localStorage.getItem('mpaint_user_name');
-            const pic = localStorage.getItem('mpaint_user_pic');
-            const profilePic = document.getElementById('profilePic');
-            if (!loginBtn || !profilePic) return;
-            if (!name || !pic) {
-                loginBtn.style.display = 'inline-block';
-                profilePic.style.display = 'none';
-                loginBtn.textContent = 'Log In';
-            } else {
-                loginBtn.style.display = 'none';
-                profilePic.src = pic;
-                profilePic.style.display = 'block';
-            }
-        }
-
-    // Update login button after Google sign-in
-    function onGoogleSignIn(response) {
-    const userObject = parseJwt(response.credential);
-    localStorage.setItem('mpaint_user_name', userObject.name);
-    localStorage.setItem('mpaint_user_email', userObject.email);
-    localStorage.setItem('mpaint_user_pic', userObject.picture);
-    // Hide the Google button after sign-in
-    const googleBtn = document.querySelector('.g_id_signin');
-    if (googleBtn) {
-        googleBtn.classList.remove('centered');
-        googleBtn.style.display = 'none';
-    }
-    // Show profile picture
-    const profilePic = document.getElementById('profilePic');
-    if (profilePic) {
-        profilePic.src = userObject.picture;
-        profilePic.style.display = 'block';
-    }
-    document.getElementById('userBox').style.display = 'flex';
-    updateLoginButton();
-    // alert("Signed in as: " + userObject.name);
-}
+        // Google Sign-In removed; using Supabase anonymous auth.
     </script>
 
 </body></html>

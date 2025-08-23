@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "framework": null,
+  "builds": [],
+  "routes": [
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
