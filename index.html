@@ -391,46 +391,52 @@
             text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.8);
         }
 
-        /* Pixel info box shown when not in paint mode */
+        /* Pixel info card (bottom-center) */
         .pixel-info {
             position: fixed;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
             z-index: 1001;
-            background: rgba(255, 255, 255, 0.95);
-            color: #333;
-            padding: 14px 18px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
             display: none;
-            align-items: center;
-            gap: 12px;
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(20px);
-            font-size: 15px;
-            font-weight: 600;
         }
 
+        .pixel-card {
+            background: #fff;
+            color: #1f2a37;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(16, 24, 40, 0.15);
+            border: 1px solid rgba(16, 24, 40, 0.08);
+            padding: 14px 16px;
+            min-width: 320px;
+            max-width: 540px;
+        }
+
+        .pixel-header { display: flex; align-items: center; gap: 10px; }
+        .pixel-icon { width: 18px; height: 18px; color: #3b82f6; }
+        .pixel-title { font-weight: 700; font-size: 15px; color: #111827; flex: 1; }
         .pixel-close {
-            background: rgba(0, 0, 0, 0.08);
-            color: #666;
+            background: rgba(0, 0, 0, 0.06);
+            color: #4b5563;
             border: none;
-            width: 28px;
-            height: 28px;
+            width: 28px; height: 28px;
             border-radius: 50%;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s ease;
+            cursor: pointer; font-size: 16px; font-weight: 700;
+            display: flex; align-items: center; justify-content: center;
+            transition: background .2s ease;
         }
+        .pixel-close:hover { background: rgba(0, 0, 0, 0.12); }
 
-        .pixel-close:hover {
-            background: rgba(0, 0, 0, 0.18);
-        }
+        .pixel-owner { margin-top: 6px; display: flex; align-items: center; gap: 8px; color: #4b5563; font-weight: 600; }
+        .pixel-owner .label { color: #6b7280; font-weight: 600; }
+        .pixel-avatar { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; background:#e5e7eb; }
+        .pixel-owner-name { color: #2563eb; font-weight: 700; cursor: default; }
+
+        .pixel-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn-chip { border: 1px solid #e5e7eb; padding: 8px 12px; border-radius: 24px; background:#fff; color:#1f2a37; font-weight:700; display:flex; gap:6px; align-items:center; cursor:pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+        .btn-chip:hover { background:#f9fafb; }
+        .btn-primary { background: linear-gradient(180deg, #3b82f6, #2563eb); color:#fff; border: none; box-shadow: 0 4px 12px rgba(37,99,235,0.25); }
+        .btn-primary:hover { filter: brightness(1.02); }
 
         /* Supabase Config Modal */
         .sb-modal {
@@ -580,10 +586,25 @@
         <span id="paintButtonText">Paint</span>
     </button>
 
-    <!-- Pixel info box (shown when user clicks without paint mode) -->
-    <div class="pixel-info" id="pixelInfo" style="display: none;">
-        <span id="pixelInfoText">Pixel: 1132, 2809</span>
-        <button class="pixel-close" id="pixelClose">×</button>
+    <!-- Pixel info card (shown when user clicks a cell) -->
+    <div class="pixel-info" id="pixelInfo" style="display:none;">
+      <div class="pixel-card">
+        <div class="pixel-header">
+          <span class="pixel-icon">📍</span>
+          <div class="pixel-title" id="pixelInfoText">Pixel: 0, 0</div>
+          <button class="pixel-close" id="pixelClose">×</button>
+        </div>
+        <div class="pixel-owner" id="pixelOwnerRow" style="display:flex;">
+          <span class="label">Painted by:</span>
+          <img class="pixel-avatar" id="pixelOwnerAvatar" src="" alt="" style="display:none;" />
+          <span class="pixel-owner-name" id="pixelOwnerText">Unpainted</span>
+        </div>
+        <div class="pixel-actions">
+          <button class="btn-chip btn-primary" id="pixelActionPaint">🖌️ Paint</button>
+          <button class="btn-chip" id="pixelActionFavorite">☆ Favorite</button>
+          <button class="btn-chip" id="pixelActionShare">↗ Share</button>
+        </div>
+      </div>
     </div>
 
     <!-- Color palette -->
@@ -660,6 +681,8 @@
 
             // Store painted cells: "x,y" -> { color, owner }
             let paintedCells = new Map();
+            // Helper to display short owner identifiers when names are unavailable
+            function shortUser(id) { return id ? (id.length > 8 ? id.slice(0,8) + '…' : id) : 'Unknown'; }
 
             async function ensureAuth() {
               if (!supabase) return null;
@@ -1507,6 +1530,12 @@
             const pixelInfo = document.getElementById('pixelInfo');
             const pixelInfoText = document.getElementById('pixelInfoText');
             const pixelClose = document.getElementById('pixelClose');
+            const pixelOwnerRow = document.getElementById('pixelOwnerRow');
+            const pixelOwnerText = document.getElementById('pixelOwnerText');
+            const pixelOwnerAvatar = document.getElementById('pixelOwnerAvatar');
+            const pixelActionPaint = document.getElementById('pixelActionPaint');
+            const pixelActionFavorite = document.getElementById('pixelActionFavorite');
+            const pixelActionShare = document.getElementById('pixelActionShare');
             
             // Generate color swatches in two rows
             colorRow1.innerHTML = '';
@@ -1566,12 +1595,64 @@
                 paintButton.style.display = 'flex';
             });
 
+            // Pixel action buttons
+            if (pixelActionPaint) {
+              pixelActionPaint.addEventListener('click', () => {
+                // Open the palette just like clicking the main paint button
+                paintButton.click();
+              });
+            }
+            if (pixelActionFavorite) {
+              pixelActionFavorite.addEventListener('click', () => {
+                try {
+                  const txt = pixelInfoText?.textContent || '';
+                  const m = txt.match(/Pixel:\s*(\d+),\s*(\d+)/);
+                  if (m) {
+                    const fav = JSON.parse(localStorage.getItem('favorites')||'[]');
+                    fav.push({ x: Number(m[1]), y: Number(m[2]), t: Date.now() });
+                    localStorage.setItem('favorites', JSON.stringify(fav));
+                    showNotification('Added to favorites');
+                  }
+                } catch {}
+              });
+            }
+            if (pixelActionShare) {
+              pixelActionShare.addEventListener('click', async () => {
+                const txt = pixelInfoText?.textContent || '';
+                const m = txt.match(/Pixel:\s*(\d+),\s*(\d+)/);
+                if (!m) return;
+                const url = new URL(window.location.href);
+                url.searchParams.set('x', m[1]);
+                url.searchParams.set('y', m[2]);
+                try {
+                  await navigator.clipboard.writeText(url.toString());
+                  showNotification('Link copied');
+                } catch {
+                  showNotification('Copy failed');
+                }
+              });
+            }
+
             // Helper to show pixel info in center-bottom and hide paint button
             window.showPixelInfo = function(x, y) {
                 if (!pixelInfo || !pixelInfoText) return;
-                // Show only pixel coordinates, no username
+                const key = `${x},${y}`;
+                const cell = paintedCells.get(key);
                 pixelInfoText.textContent = `Pixel: ${x}, ${y}`;
-                pixelInfo.style.display = 'flex';
+                // Owner row
+                if (!cell) {
+                  pixelOwnerText.textContent = 'Unpainted';
+                  if (pixelOwnerAvatar) pixelOwnerAvatar.style.display = 'none';
+                } else {
+                  const ownerLabel = cell.owner_name || shortUser(cell.owner);
+                  pixelOwnerText.textContent = ownerLabel;
+                  if (cell.owner_avatar && pixelOwnerAvatar) {
+                    pixelOwnerAvatar.src = cell.owner_avatar; pixelOwnerAvatar.style.display = 'inline-block';
+                  } else if (pixelOwnerAvatar) {
+                    pixelOwnerAvatar.style.display = 'none';
+                  }
+                }
+                pixelInfo.style.display = 'block';
                 paintButton.style.display = 'none';
             };
         }
