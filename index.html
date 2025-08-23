@@ -1262,7 +1262,8 @@
                     return;
                 }
                 const wrapped = getWrappedCoordinates(gridCoords.x, gridCoords.y);
-                showPixelInfo(wrapped.x, wrapped.y);
+                // Pass both world and display coordinates so we can look up owner correctly
+                showPixelInfo(gridCoords.x, gridCoords.y, wrapped.x, wrapped.y);
                 return;
             }
 
@@ -1643,11 +1644,13 @@
             }
 
             // Helper to show pixel info in center-bottom and hide paint button
-            window.showPixelInfo = function(x, y) {
+            window.showPixelInfo = function(worldX, worldY, displayX, displayY) {
                 if (!pixelInfo || !pixelInfoText) return;
-                const key = `${x},${y}`;
+                // Use world coords for storage lookup
+                const key = `${worldX},${worldY}`;
                 const cell = paintedCells.get(key);
-                pixelInfoText.textContent = `Pixel: ${x}, ${y}`;
+                // Show wrapped/display coords in UI
+                pixelInfoText.textContent = `Pixel: ${displayX}, ${displayY}`;
                 // Owner row
                 if (!cell) {
                   // Hide the owner row entirely for unpainted cells
