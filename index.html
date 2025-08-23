@@ -461,6 +461,62 @@
         .sb-btn.primary { background: #2f9e44; color: white; }
         .sb-btn.secondary { background: #f1f3f5; color: #333; }
         
+        /* Auth UI */
+        #userBox {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 1500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        #loginButton {
+            padding: 10px 14px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 700;
+            background: #3498ff;
+            color: #fff;
+            box-shadow: 0 2px 10px rgba(52,152,255,0.25);
+        }
+        #profilePic {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: none;
+            cursor: pointer;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+        }
+        #profileDropdown {
+            position: absolute;
+            top: 56px;
+            right: 0;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            background: #fff;
+            border: 1px solid #e8e8e8;
+            border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+            padding: 12px;
+            min-width: 220px;
+        }
+        #dropdownHeader { display: flex; align-items: center; gap: 10px; }
+        #dropdownProfilePic { width: 32px; height: 32px; border-radius: 50%; }
+        #dropdownUsername { font-weight: 700; }
+        #logoutButton {
+            padding: 10px 12px; border: none; border-radius: 10px; cursor: pointer;
+            background: #f1f3f5; color: #333; font-weight: 700;
+        }
+
+        /* Auth Prompt Modal */
+        .auth-modal { display: none; position: fixed; inset: 0; z-index: 3500; background: rgba(0,0,0,0.35); align-items: center; justify-content: center; }
+        .auth-card { background: #fff; border-radius: 16px; padding: 20px; width: 92%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,0.18); display: flex; flex-direction: column; gap: 12px; }
+        .google-btn { padding: 12px 14px; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; background: #fff; color: #333; border: 1px solid #e3e6eb; display: flex; align-items: center; gap: 10px; justify-content: center; }
+
     </style>
 </head>
 <body>
@@ -480,6 +536,28 @@
           <button id="sbCancelBtn" class="sb-btn secondary">Cancel</button>
           <button id="sbSaveBtn" class="sb-btn primary">Save</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Auth/User Box -->
+    <div id="userBox" style="display:flex;">
+        <button id="loginButton" title="Log in">Log In</button>
+        <img id="profilePic" alt="Profile"/>
+        <div id="profileDropdown">
+            <div id="dropdownHeader">
+                <img id="dropdownProfilePic" alt="Profile"/>
+                <span id="dropdownUsername"></span>
+            </div>
+            <button id="logoutButton">Log out</button>
+        </div>
+    </div>
+
+    <!-- Auth Prompt Modal (shown when clicking Paint while signed out) -->
+    <div id="authPromptModal" class="auth-modal">
+      <div class="auth-card">
+        <h3>Sign in to paint</h3>
+        <button id="googleSignInBtn" class="google-btn">Sign in with Google</button>
+        <button id="authCancelBtn" class="sb-btn secondary" style="align-self:flex-end;">Cancel</button>
       </div>
     </div>
 
@@ -587,11 +665,43 @@
               if (!supabase) return null;
               const { data: { user } } = await supabase.auth.getUser();
               if (user) { USER_ID = user.id; return user; }
-              // Anonymous sign-in (requires Anonymous provider enabled)
-              const { data, error } = await supabase.auth.signInAnonymously();
-              if (error) { console.error('Anon sign-in failed', error); return null; }
-              USER_ID = data.user.id;
-              return data.user;
+              return null; // no auto-anon; require Google login
+            }
+
+            function renderAuthUI(user) {
+              const loginBtn = document.getElementById('loginButton');
+              const profilePic = document.getElementById('profilePic');
+              const dropdownPic = document.getElementById('dropdownProfilePic');
+              const dropdownName = document.getElementById('dropdownUsername');
+              const dropdown = document.getElementById('profileDropdown');
+              if (!loginBtn || !profilePic || !dropdown) return;
+              if (!user) {
+                loginBtn.style.display = 'inline-block';
+                profilePic.style.display = 'none';
+                dropdown.style.display = 'none';
+                return;
+              }
+              const pic = user.user_metadata?.avatar_url || '';
+              const name = user.user_metadata?.full_name || user.email || 'User';
+              loginBtn.style.display = 'none';
+              if (pic) { profilePic.src = pic; dropdownPic.src = pic; }
+              dropdownName.textContent = name;
+              profilePic.style.display = 'block';
+            }
+
+            function showAuthPrompt() { const m = document.getElementById('authPromptModal'); if (m) m.style.display = 'flex'; }
+            function hideAuthPrompt() { const m = document.getElementById('authPromptModal'); if (m) m.style.display = 'none'; }
+
+            async function loginWithGoogle() {
+              if (!supabase) return;
+              await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+            }
+
+            async function logout() {
+              if (!supabase) return;
+              await supabase.auth.signOut();
+              USER_ID = null;
+              renderAuthUI(null);
             }
 
             function mergeRow(row) {
@@ -635,11 +745,36 @@
 
             (async function startPersistence(){
               if (!supabase) return;
-              await ensureAuth();
+              const user = await ensureAuth();
+              renderAuthUI(user);
               await initialLoad();
               // Start polling every 2s until Realtime is available
               setInterval(pollUpdates, 2000);
             })();
+
+            // Auth UI events
+            document.addEventListener('DOMContentLoaded', () => {
+              const loginBtn = document.getElementById('loginButton');
+              const profilePic = document.getElementById('profilePic');
+              const dropdown = document.getElementById('profileDropdown');
+              const logoutBtn = document.getElementById('logoutButton');
+              const googleBtn = document.getElementById('googleSignInBtn');
+              const authCancelBtn = document.getElementById('authCancelBtn');
+
+              loginBtn?.addEventListener('click', () => showAuthPrompt());
+              googleBtn?.addEventListener('click', () => loginWithGoogle());
+              authCancelBtn?.addEventListener('click', () => hideAuthPrompt());
+              profilePic?.addEventListener('click', () => {
+                if (dropdown.style.display === 'flex') dropdown.style.display = 'none';
+                else dropdown.style.display = 'flex';
+              });
+              document.addEventListener('mousedown', (e) => {
+                if (dropdown.style.display === 'flex' && !dropdown.contains(e.target) && e.target !== profilePic) {
+                  dropdown.style.display = 'none';
+                }
+              });
+              logoutBtn?.addEventListener('click', () => logout());
+            });
 
             // Paint action -> Supabase upsert/delete
             async function paintCell(gridX, gridY, color) {
@@ -1406,6 +1541,10 @@
             
             // Toggle color palette when paint button is clicked and enable paint mode
             paintButton.addEventListener('click', () => {
+                if (!USER_ID) { // require sign-in first
+                    showAuthPrompt();
+                    return;
+                }
                 const colorPalette = document.getElementById('colorPalette');
                 colorPalette.classList.toggle('visible');
                 isPaintMode = true;
