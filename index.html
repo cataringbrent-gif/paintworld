@@ -676,8 +676,10 @@
               ? window.supabase.createClient(cfg.url, cfg.key)
               : null;
 
-            // Current user id (from Supabase anonymous auth)
+            // Current user info (from Supabase auth)
             let USER_ID = null;
+            let USER_NAME = null;
+            let USER_AVATAR = null;
 
             // Store painted cells: "x,y" -> { color, owner }
             let paintedCells = new Map();
@@ -687,7 +689,12 @@
             async function ensureAuth() {
               if (!supabase) return null;
               const { data: { user } } = await supabase.auth.getUser();
-              if (user) { USER_ID = user.id; return user; }
+              if (user) {
+                USER_ID = user.id;
+                USER_NAME = user.user_metadata?.full_name || user.email || 'User';
+                USER_AVATAR = user.user_metadata?.avatar_url || null;
+                return user;
+              }
               return null; // no auto-anon; require Google login
             }
 
@@ -724,6 +731,8 @@
               if (!supabase) return;
               await supabase.auth.signOut();
               USER_ID = null;
+              USER_NAME = null;
+              USER_AVATAR = null;
               renderAuthUI(null);
             }
 
@@ -732,7 +741,7 @@
               if (row.color === null) {
                 paintedCells.delete(key);
               } else {
-                paintedCells.set(key, { color: row.color, owner: row.owner });
+                paintedCells.set(key, { color: row.color, owner: row.owner, owner_name: row.owner_name || null, owner_avatar: row.owner_avatar || null });
               }
             }
 
@@ -830,9 +839,9 @@
                   }
                   const { error } = await supabase
                     .from('paints')
-                    .upsert([{ x: gridX, y: gridY, color, owner: USER_ID }], { onConflict: 'x,y' });
+                    .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
                   if (error) { console.error('Upsert error', error); return; }
-                  paintedCells.set(cellKey, { color, owner: USER_ID });
+                  paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
               }
               updatePaintedCellsDisplay();
               updateCellCounter();
@@ -1641,11 +1650,13 @@
                 pixelInfoText.textContent = `Pixel: ${x}, ${y}`;
                 // Owner row
                 if (!cell) {
-                  pixelOwnerText.textContent = 'Unpainted';
+                  // Hide the owner row entirely for unpainted cells
+                  if (pixelOwnerRow) pixelOwnerRow.style.display = 'none';
                   if (pixelOwnerAvatar) pixelOwnerAvatar.style.display = 'none';
                 } else {
-                  const ownerLabel = cell.owner_name || shortUser(cell.owner);
-                  pixelOwnerText.textContent = ownerLabel;
+                  const ownerLabel = (cell.owner_name && cell.owner_name.trim()) ? cell.owner_name : shortUser(cell.owner);
+                  if (pixelOwnerText) pixelOwnerText.textContent = ownerLabel;
+                  if (pixelOwnerRow) pixelOwnerRow.style.display = 'flex';
                   if (cell.owner_avatar && pixelOwnerAvatar) {
                     pixelOwnerAvatar.src = cell.owner_avatar; pixelOwnerAvatar.style.display = 'inline-block';
                   } else if (pixelOwnerAvatar) {
