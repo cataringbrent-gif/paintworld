@@ -681,6 +681,101 @@
             let USER_NAME = null;
             let USER_AVATAR = null;
 
+            // Per-user paint charges
+            const DEFAULT_CAPACITY = 100;
+            const DEFAULT_CHARGES = 100;
+            const RECHARGE_SECONDS = 30; // 1 charge per 30s when not full
+            let USER_CAPACITY = DEFAULT_CAPACITY;
+            let USER_CHARGES = DEFAULT_CHARGES;
+            let lastRefillAt = null; // Date (ms) anchor for regen cadence
+            let regenTimer = null;
+
+            function fmtCountdown(seconds) {
+              const m = Math.floor(seconds / 60);
+              const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+              return m > 0 ? `${m}:${s}` : `0:${s}`;
+            }
+
+            function updatePaintButtonUI() {
+              const btn = document.getElementById('paintButton');
+              const label = document.getElementById('paintButtonText');
+              if (!btn || !label) return;
+              if (!USER_ID) {
+                label.textContent = 'Paint';
+                return;
+              }
+              // Show counts always for signed-in users
+              let suffix = '';
+              if (USER_CHARGES < USER_CAPACITY && lastRefillAt) {
+                const now = Date.now();
+                const elapsed = Math.max(0, (now - lastRefillAt) / 1000);
+                const nextIn = RECHARGE_SECONDS - (elapsed % RECHARGE_SECONDS);
+                suffix = ` (${fmtCountdown(nextIn)})`;
+              }
+              label.textContent = `Paint ${USER_CHARGES}/${USER_CAPACITY}${suffix}`;
+            }
+
+            function stopRegenTimer() { if (regenTimer) { clearInterval(regenTimer); regenTimer = null; } }
+
+            async function tickRegen() {
+              if (!USER_ID) return;
+              if (USER_CHARGES >= USER_CAPACITY) { updatePaintButtonUI(); return; }
+              if (!lastRefillAt) lastRefillAt = Date.now();
+              const now = Date.now();
+              const deltaSec = Math.floor((now - lastRefillAt) / 1000);
+              if (deltaSec < RECHARGE_SECONDS) { updatePaintButtonUI(); return; }
+              const gained = Math.floor(deltaSec / RECHARGE_SECONDS);
+              if (gained <= 0) { updatePaintButtonUI(); return; }
+              const room = USER_CAPACITY - USER_CHARGES;
+              const toAdd = Math.min(room, gained);
+              if (toAdd <= 0) { updatePaintButtonUI(); return; }
+              USER_CHARGES += toAdd;
+              lastRefillAt += toAdd * RECHARGE_SECONDS * 1000; // slide anchor forward by whole steps
+              // Persist minimal writes
+              if (supabase) {
+                await supabase.from('user_paints').update({
+                  charges: USER_CHARGES,
+                  last_refill_at: new Date(lastRefillAt).toISOString(),
+                  capacity: USER_CAPACITY
+                }).eq('user_id', USER_ID);
+              }
+              updatePaintButtonUI();
+            }
+
+            function startRegenTimer() {
+              stopRegenTimer();
+              regenTimer = setInterval(tickRegen, 1000);
+            }
+
+            async function loadOrInitUserPaints() {
+              if (!supabase || !USER_ID) return;
+              const { data, error } = await supabase
+                .from('user_paints')
+                .select('*')
+                .eq('user_id', USER_ID)
+                .maybeSingle();
+              if (error) { console.warn('user_paints select error', error); }
+              if (!data) {
+                USER_CAPACITY = DEFAULT_CAPACITY;
+                USER_CHARGES = DEFAULT_CHARGES;
+                lastRefillAt = Date.now();
+                await supabase.from('user_paints').insert({
+                  user_id: USER_ID,
+                  capacity: USER_CAPACITY,
+                  charges: USER_CHARGES,
+                  regen_seconds: RECHARGE_SECONDS,
+                  last_refill_at: new Date(lastRefillAt).toISOString()
+                });
+              } else {
+                USER_CAPACITY = Math.max(1, data.capacity ?? DEFAULT_CAPACITY);
+                USER_CHARGES = Math.min(USER_CAPACITY, Math.max(0, data.charges ?? DEFAULT_CHARGES));
+                // Use server anchor if present
+                lastRefillAt = data.last_refill_at ? new Date(data.last_refill_at).getTime() : Date.now();
+              }
+              updatePaintButtonUI();
+              startRegenTimer();
+            }
+
             // Store painted cells: "x,y" -> { color, owner }
             let paintedCells = new Map();
             // Helper to display short owner identifiers when names are unavailable
@@ -725,7 +820,6 @@
             async function loginWithGoogle() {
               if (!supabase) return;
               await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
-              initChargesForUser();
             }
 
             async function logout() {
@@ -734,9 +828,10 @@
               USER_ID = null;
               USER_NAME = null;
               USER_AVATAR = null;
+              stopRegenTimer();
+              USER_CAPACITY = DEFAULT_CAPACITY; USER_CHARGES = DEFAULT_CHARGES; lastRefillAt = null;
               renderAuthUI(null);
-              // Reset charges to guest bucket
-              initChargesForUser();
+              updatePaintButtonUI();
             }
 
             function mergeRow(row) {
@@ -782,28 +877,11 @@
               if (!supabase) return;
               const user = await ensureAuth();
               renderAuthUI(user);
-              // Initialize charges for current auth user
-              initChargesForUser();
+              if (user) { await loadOrInitUserPaints(); } else { updatePaintButtonUI(); }
               await initialLoad();
               // Start polling every 2s until Realtime is available
               setInterval(pollUpdates, 2000);
             })();
-
-            // Keep UI in sync with auth changes (after OAuth redirect, logout, etc.)
-            if (supabase && supabase.auth && typeof supabase.auth.onAuthStateChange === 'function') {
-              supabase.auth.onAuthStateChange((_event, session) => {
-                const user = session?.user || null;
-                if (user) {
-                  USER_ID = user.id;
-                  USER_NAME = user.user_metadata?.full_name || user.email || 'User';
-                  USER_AVATAR = user.user_metadata?.avatar_url || null;
-                } else {
-                  USER_ID = null; USER_NAME = null; USER_AVATAR = null;
-                }
-                renderAuthUI(user);
-                initChargesForUser();
-              });
-            }
 
             // Auth UI events
             document.addEventListener('DOMContentLoaded', () => {
@@ -815,13 +893,6 @@
               const authCancelBtn = document.getElementById('authCancelBtn');
 
               loginBtn?.addEventListener('click', () => showAuthPrompt());
-              googleBtn?.addEventListener('click', () => loginWithGoogle());
-              authCancelBtn?.addEventListener('click', () => hideAuthPrompt());
-              profilePic?.addEventListener('click', () => {
-                if (!dropdown) return;
-                dropdown.style.display = dropdown.style.display === 'flex' ? 'none' : 'flex';
-              });
-              logoutBtn?.addEventListener('click', () => logout());
               googleBtn?.addEventListener('click', () => loginWithGoogle());
               authCancelBtn?.addEventListener('click', () => hideAuthPrompt());
               profilePic?.addEventListener('click', () => {
@@ -861,10 +932,10 @@
                   if (error) { console.error('Delete error', error); return; }
                   paintedCells.delete(cellKey);
               } else {
-                  // Enforce charges server-side
-                  if (!USER_ID) { showNotification('Sign in to paint'); return; }
-                  const spend = await serverSpendCharge(1);
-                  if (!spend.allowed) { showNotification('No more charges'); updateChargesUI(); return; }
+                  // Require charges for authenticated users
+                  if (USER_ID) {
+                    if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
+                  }
                   if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
                       showNotification();
                       return;
@@ -874,8 +945,18 @@
                     .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
                   if (error) { console.error('Upsert error', error); return; }
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  // UI already updated from serverSpendCharge; refresh display
-                  updateChargesUI();
+                  // Spend a charge if signed-in
+                  if (USER_ID) {
+                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                    lastRefillAt = Date.now();
+                    updatePaintButtonUI();
+                    // Persist spend
+                    await supabase.from('user_paints').update({
+                      charges: USER_CHARGES,
+                      last_refill_at: new Date(lastRefillAt).toISOString(),
+                      capacity: USER_CAPACITY
+                    }).eq('user_id', USER_ID);
+                  }
               }
               updatePaintedCellsDisplay();
               updateCellCounter();
@@ -1580,77 +1661,6 @@
             const pixelActionPaint = document.getElementById('pixelActionPaint');
             const pixelActionFavorite = document.getElementById('pixelActionFavorite');
             const pixelActionShare = document.getElementById('pixelActionShare');
-            const paintButtonText = document.getElementById('paintButtonText');
-
-            // ======= Paint charges (per-user) =======
-            // Server-enforced via Supabase RPC; we'll keep a minimal local fallback
-            const CHARGES_MAX = 100; // fallback only; server provides real max
-            let charges = CHARGES_MAX;
-            let serverMax = CHARGES_MAX;
-            let nextRestoreSeconds = 0; // server-provided remaining seconds for next +1
-
-            // Server RPC helpers
-            async function serverGetCharges() {
-              if (!supabase || !USER_ID) return null;
-              try {
-                const { data, error } = await supabase.rpc('rpc_get_charges');
-                if (error) { console.error('rpc_get_charges error', error); return null; }
-                const row = Array.isArray(data) ? data[0] : data; // supabase-js returns array for setof
-                if (!row) return null;
-                charges = typeof row.charges === 'number' ? row.charges : charges;
-                serverMax = typeof row.max_charges === 'number' ? row.max_charges : serverMax;
-                nextRestoreSeconds = typeof row.next_restore_seconds === 'number' ? row.next_restore_seconds : nextRestoreSeconds;
-                return row;
-              } catch (e) { console.error(e); return null; }
-            }
-            async function serverSpendCharge(amount = 1) {
-              if (!supabase || !USER_ID) return { allowed: false };
-              try {
-                const { data, error } = await supabase.rpc('rpc_spend_charge', { p_amount: amount });
-                if (error) { console.error('rpc_spend_charge error', error); return { allowed: false }; }
-                const row = Array.isArray(data) ? data[0] : data;
-                if (row) {
-                  if (typeof row.allowed === 'boolean') {
-                    charges = typeof row.charges === 'number' ? row.charges : charges;
-                    serverMax = typeof row.max_charges === 'number' ? row.max_charges : serverMax;
-                    nextRestoreSeconds = typeof row.next_restore_seconds === 'number' ? row.next_restore_seconds : nextRestoreSeconds;
-                    return row;
-                  }
-                }
-                return { allowed: false };
-              } catch (e) { console.error(e); return { allowed: false }; }
-            }
-            function formatCountdown() {
-              if (charges >= serverMax) return '';
-              const s = Math.max(0, Math.ceil(nextRestoreSeconds));
-              const mm = Math.floor(s / 60);
-              const ss = String(s % 60).padStart(2, '0');
-              return ` (${mm}:${ss})`;
-            }
-            function updateChargesUI() {
-              if (!paintButtonText) return;
-              const btn = document.getElementById('paintButton');
-              if (!USER_ID) {
-                // Signed out: show plain label and keep button enabled (it will open auth prompt)
-                paintButtonText.textContent = 'Paint';
-                if (btn) btn.disabled = false;
-                return;
-              }
-              paintButtonText.textContent = `Paint ${charges}/${serverMax}${formatCountdown()}`;
-              if (btn) btn.disabled = charges <= 0; // visually disabled depends on browser; styling is custom
-            }
-            function initChargesForUser() {
-              // fetch from server for this user id; if logged out, reset to defaults
-              if (!USER_ID) {
-                // Logged out: reset and show plain label via updateChargesUI()
-                charges = CHARGES_MAX; serverMax = CHARGES_MAX; nextRestoreSeconds = 0; updateChargesUI();
-                return;
-              }
-              // Logged in: immediately reflect signed-in state using current values,
-              // then fetch from server and refresh once actual values arrive.
-              updateChargesUI();
-              serverGetCharges().then(() => updateChargesUI());
-            }
             
             // Generate color swatches in two rows
             colorRow1.innerHTML = '';
@@ -1684,22 +1694,11 @@
             });
             
             // Toggle color palette when paint button is clicked and enable paint mode
-            paintButton.addEventListener('click', async () => {
-                if (!supabase) return;
-                // Always check live session to avoid stale USER_ID
-                const { data: { user } } = await supabase.auth.getUser();
-                if (!user) {
-                    // Strictly block and show auth prompt when signed out
+            paintButton.addEventListener('click', () => {
+                if (!USER_ID) { // require sign-in first
                     showAuthPrompt();
                     return;
                 }
-                // Update globals and UI state, then fetch server charges
-                USER_ID = user.id;
-                USER_NAME = user.user_metadata?.full_name || user.email || 'User';
-                USER_AVATAR = user.user_metadata?.avatar_url || null;
-                updateChargesUI();
-                await serverGetCharges();
-                updateChargesUI();
                 const colorPalette = document.getElementById('colorPalette');
                 colorPalette.classList.toggle('visible');
                 isPaintMode = true;
@@ -1785,119 +1784,15 @@
                 pixelInfo.style.display = 'block';
                 paintButton.style.display = 'none';
             };
-    
-    // Toggle color palette when paint button is clicked and enable paint mode
-    paintButton.addEventListener('click', () => {
-        if (!USER_ID) { // require sign-in first
-            showAuthPrompt();
-            return;
         }
-        const colorPalette = document.getElementById('colorPalette');
-        colorPalette.classList.toggle('visible');
-        isPaintMode = true;
-        if (pixelInfo) pixelInfo.style.display = 'none';
-        paintButton.style.display = 'flex';
-        if (colorPalette.classList.contains('visible')) {
-            hasAutoZoomedThisSession = false;
-        }
-    });
-    
-    // Close palette with X button
-    paletteCloseButton.addEventListener('click', () => {
-        document.getElementById('colorPalette').classList.remove('visible');
-    });
-
-    // Close pixel info and bring back paint button
-    pixelClose.addEventListener('click', () => {
-        pixelInfo.style.display = 'none';
-        paintButton.style.display = 'flex';
-    });
-
-    // Pixel action buttons
-    if (pixelActionPaint) {
-      pixelActionPaint.addEventListener('click', () => {
-        // Open the palette just like clicking the main paint button
-        paintButton.click();
-      });
-    }
-    if (pixelActionFavorite) {
-      pixelActionFavorite.addEventListener('click', () => {
-        try {
-          const txt = pixelInfoText?.textContent || '';
-          const m = txt.match(/Pixel:\s*(\d+),\s*(\d+)/);
-          if (m) {
-            const fav = JSON.parse(localStorage.getItem('favorites')||'[]');
-            fav.push({ x: Number(m[1]), y: Number(m[2]), t: Date.now() });
-            localStorage.setItem('favorites', JSON.stringify(fav));
-            showNotification('Added to favorites');
-          }
-        } catch {}
-      });
-    }
-    if (pixelActionShare) {
-      pixelActionShare.addEventListener('click', async () => {
-        const txt = pixelInfoText?.textContent || '';
-        const m = txt.match(/Pixel:\s*(\d+),\s*(\d+)/);
-        if (!m) return;
-        const url = new URL(window.location.href);
-        url.searchParams.set('x', m[1]);
-        url.searchParams.set('y', m[2]);
-        try {
-          await navigator.clipboard.writeText(url.toString());
-          showNotification('Link copied');
-        } catch {
-          showNotification('Copy failed');
-        }
-      });
-    }
-
-    // Helper to show pixel info in center-bottom and hide paint button
-    window.showPixelInfo = function(worldX, worldY, displayX, displayY) {
-        if (!pixelInfo || !pixelInfoText) return;
-        // Use world coords for storage lookup
-        const key = `${worldX},${worldY}`;
-        const cell = paintedCells.get(key);
-        // Show wrapped/display coords in UI
-        pixelInfoText.textContent = `Pixel: ${displayX}, ${displayY}`;
-        // Owner row
-        if (!cell) {
-          // Hide the owner row entirely for unpainted cells
-          if (pixelOwnerRow) pixelOwnerRow.style.display = 'none';
-          if (pixelOwnerAvatar) pixelOwnerAvatar.style.display = 'none';
-        } else {
-          const ownerLabel = (cell.owner_name && cell.owner_name.trim()) ? cell.owner_name : shortUser(cell.owner);
-          if (pixelOwnerText) pixelOwnerText.textContent = ownerLabel;
-          if (pixelOwnerRow) pixelOwnerRow.style.display = 'flex';
-          if (cell.owner_avatar && pixelOwnerAvatar) {
-            pixelOwnerAvatar.src = cell.owner_avatar; pixelOwnerAvatar.style.display = 'inline-block';
-          } else if (pixelOwnerAvatar) {
-            pixelOwnerAvatar.style.display = 'none';
-          }
-        }
-        pixelInfo.style.display = 'block';
-        paintButton.style.display = 'none';
-    };
-}
         
-// Initialize palette when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    initializePalette();
-    updateCellCounter(); // Initialize the cell counter
-    // Start countdown and periodic server refresh
-    let tick = 0;
-    setInterval(() => {
-      if (typeof nextRestoreSeconds === 'number' && nextRestoreSeconds > 0) {
-        nextRestoreSeconds = Math.max(0, nextRestoreSeconds - 1);
-      }
-      updateChargesUI();
-      tick = (tick + 1) % 5;
-      if (tick === 0 && USER_ID) {
-        serverGetCharges().then(() => updateChargesUI());
-      }
-    }, 1000);
-});
+        // Initialize palette when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            initializePalette();
+            updateCellCounter(); // Initialize the cell counter
+        });
 
-// Google Sign-In removed; using Supabase anonymous auth.
-</script>
+        // Google Sign-In removed; using Supabase anonymous auth.
+    </script>
 
 </body></html>
