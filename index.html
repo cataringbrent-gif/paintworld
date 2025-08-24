@@ -924,14 +924,23 @@
                       showNotification('You can only delete your own paint.');
                       return;
                   }
-                  // Delete row (RLS enforces ownership)
-                  const { error } = await supabase
-                    .from('paints')
-                    .delete()
-                    .eq('x', gridX)
-                    .eq('y', gridY);
-                  if (error) { console.error('Delete error', error); return; }
+                  // Optimistic delete
                   paintedCells.delete(cellKey);
+                  updatePaintedCellsDisplay();
+                  // Fire-and-forget backend delete; revert if fails
+                  (async () => {
+                    const { error } = await supabase
+                      .from('paints')
+                      .delete()
+                      .eq('x', gridX)
+                      .eq('y', gridY);
+                    if (error) {
+                      console.error('Delete error', error);
+                      // revert
+                      paintedCells.set(cellKey, cell);
+                      updatePaintedCellsDisplay();
+                    }
+                  })();
               } else {
                   // Require charges for authenticated users
                   if (USER_ID) {
@@ -941,27 +950,52 @@
                       showNotification();
                       return;
                   }
-                  const { error } = await supabase
-                    .from('paints')
-                    .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
-                  if (error) { console.error('Upsert error', error); return; }
+                  // Optimistic paint
+                  const previous = cell ? { ...cell } : null;
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  // Spend a charge if signed-in
+                  updatePaintedCellsDisplay();
+                  // Spend a charge immediately for responsiveness
+                  let refunded = false;
                   if (USER_ID) {
-                    const prevCharges = USER_CHARGES;
+                    const before = USER_CHARGES;
                     USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    // Start cooldown only when charges drop below capacity; clear if still >= capacity
                     lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
                     updatePaintButtonUI();
-                    // Persist spend
-                    await supabase.from('user_paints').update({
-                      charges: USER_CHARGES,
-                      last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                      capacity: USER_CAPACITY
-                    }).eq('user_id', USER_ID);
+                    // Persist spend in background
+                    (async () => {
+                      const { error: spendErr } = await supabase.from('user_paints').update({
+                        charges: USER_CHARGES,
+                        last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                        capacity: USER_CAPACITY
+                      }).eq('user_id', USER_ID);
+                      if (spendErr) {
+                        console.error('Spend persist error', spendErr);
+                        // refund
+                        USER_CHARGES = before;
+                        refunded = true;
+                        updatePaintButtonUI();
+                      }
+                    })();
                   }
+                  // Backend upsert in background; revert & refund if it fails
+                  (async () => {
+                    const { error } = await supabase
+                      .from('paints')
+                      .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
+                    if (error) {
+                      console.error('Upsert error', error);
+                      // revert cell
+                      if (previous) paintedCells.set(cellKey, previous); else paintedCells.delete(cellKey);
+                      updatePaintedCellsDisplay();
+                      // refund charge if we spent
+                      if (USER_ID && !refunded) {
+                        USER_CHARGES += 1;
+                        updatePaintButtonUI();
+                        await supabase.from('user_paints').update({ charges: USER_CHARGES }).eq('user_id', USER_ID);
+                      }
+                    }
+                  })();
               }
-              updatePaintedCellsDisplay();
               updateCellCounter();
             }
             const map = new maplibregl.Map({
@@ -1209,31 +1243,6 @@
         }
         
         // ...existing code...
-        
-        function getCellColor(gridX, gridY) {
-                const cellKey = `${gridX},${gridY}`;
-                const cell = paintedCells.get(cellKey);
-                return cell ? cell.color : null;
-        }
-        
-        function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
-        }
-        
-        function updateCellCounter() {
-            // No number needed, just keep the button text as 'Paint'
-        }
         
         function showNotification(message) {
             const notification = document.getElementById('notification');
