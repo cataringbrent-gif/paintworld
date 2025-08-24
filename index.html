@@ -1634,7 +1634,14 @@
             }
             function initChargesForUser() {
               // fetch from server for this user id; if logged out, reset to defaults
-              if (!USER_ID) { charges = CHARGES_MAX; serverMax = CHARGES_MAX; nextRestoreSeconds = 0; updateChargesUI(); return; }
+              if (!USER_ID) {
+                // Logged out: reset and show plain label via updateChargesUI()
+                charges = CHARGES_MAX; serverMax = CHARGES_MAX; nextRestoreSeconds = 0; updateChargesUI();
+                return;
+              }
+              // Logged in: immediately reflect signed-in state using current values,
+              // then fetch from server and refresh once actual values arrive.
+              updateChargesUI();
               serverGetCharges().then(() => updateChargesUI());
             }
             
