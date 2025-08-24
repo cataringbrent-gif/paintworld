@@ -242,29 +242,6 @@
             opacity: 1;
         }
 
-        /* Zoom hint pill at top center */
-        #zoomHintBtn {
-            position: fixed;
-            top: 16px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 1800;
-            display: none; /* toggled via JS */
-            background: rgba(255,255,255,0.95);
-            color: #1f2937;
-            border: 1px solid rgba(0,0,0,0.08);
-            padding: 10px 14px;
-            border-radius: 999px;
-            font-size: 14px;
-            font-weight: 600;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.12);
-            backdrop-filter: saturate(1.2) blur(6px);
-            cursor: pointer;
-            align-items: center;
-            gap: 8px;
-        }
-        #zoomHintBtn .icon { font-size: 16px; }
-
         .color-palette {
             position: fixed;
             bottom: 80px;
@@ -600,14 +577,8 @@
     
     
     
-    <!-- Notification container (no default text) -->
-    <div id="notification" class="notification"></div>
-
-    <!-- Top-center zoom hint pill -->
-    <button id="zoomHintBtn" type="button">
-      <span class="icon">↔️</span>
-      <span>Zoom in to see the pixels</span>
-    </button>
+    <!-- Notification for max cells reached -->
+    <div class="notification" id="notification">No more charges</div>
     
     <!-- Paint button -->
     <button class="paint-button" id="paintButton" style="display:flex; align-items:center; justify-content:center; background:#3498ff; color:#fff; border:none; border-radius:24px; padding:14px 24px; font-size:1.25rem; font-weight:700; box-shadow:0 2px 12px rgba(52,152,255,0.18); cursor:pointer; min-width:120px; gap:8px;">
@@ -667,28 +638,6 @@
                 clean.searchParams.delete('supabaseKey');
                 window.history.replaceState({}, '', clean.toString());
               }
-
-            // Show a top-center hint when user is zoomed out too far (> 4000x4000 cells)
-            function updateZoomHint() {
-              const btn = document.getElementById('zoomHintBtn');
-              if (!btn) return;
-              const vc = getVisibleGridCells();
-              const show = (vc.x > 4000 || vc.y > 4000);
-              btn.style.display = show ? 'flex' : 'none';
-            }
-
-            // Zoom hint click -> zoom to ~4000x4000 centered on current map center
-            function bindZoomHint() {
-              const btn = document.getElementById('zoomHintBtn');
-              if (!btn) return;
-              btn.addEventListener('click', () => {
-                // Convert map center lng/lat to grid and auto-zoom
-                const center = map.getCenter();
-                const toGrid = geoToGrid(center.lng, center.lat); // returns [gx, gy]
-                autoZoomToCell(Math.floor(toGrid[0]), Math.floor(toGrid[1]), 4000);
-                btn.style.display = 'none';
-              });
-            }
             })();
 
             function getSupabaseConfig() {
@@ -1109,16 +1058,6 @@
             // Convert back to EPSG:4326
             const geoPoint = fromWebMercator(mercatorX, mercatorY);
             return [geoPoint.lng, geoPoint.lat];
-        }
-
-        // Convert geographic coordinates to normalized grid coordinates (0..1,999,999)
-        function geoToGrid(lng, lat) {
-            const merc = toWebMercator(lng, lat);
-            const nx = Math.floor((merc.x + 20037508.34) / CELL_SIZE_METERS);
-            const ny = Math.floor((merc.y + 20037508.34) / CELL_SIZE_METERS);
-            const gx = Math.max(0, Math.min(1999999, nx));
-            const gy = Math.max(0, Math.min(1999999, ny));
-            return [gx, gy];
         }
 
         // Get grid cell size in meters (always 2m × 2m)
@@ -1579,22 +1518,62 @@
             // Initial grid update
             updateGridVisibility();
             updateGrid();
-            updateZoomHint();
-            bindZoomHint();
+
+            // Create zoom hint button (top-center) once
+            (function ensureZoomHint(){
+              if (window.__zoomHintCreated) return; window.__zoomHintCreated = true;
+              const btn = document.createElement('button');
+              btn.id = 'zoomHint';
+              btn.type = 'button';
+              btn.textContent = '  Zoom in to see the pixels';
+              btn.style.position = 'fixed';
+              btn.style.top = '16px';
+              btn.style.left = '50%';
+              btn.style.transform = 'translateX(-50%)';
+              btn.style.display = 'none';
+              btn.style.zIndex = '2000';
+              btn.style.padding = '8px 14px';
+              btn.style.borderRadius = '999px';
+              btn.style.border = '1px solid rgba(0,0,0,0.1)';
+              btn.style.background = 'rgba(255,255,255,0.9)';
+              btn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
+              btn.style.color = '#1f2937';
+              btn.style.fontSize = '14px';
+              btn.style.fontWeight = '600';
+              btn.style.backdropFilter = 'blur(6px)';
+              btn.style.cursor = 'pointer';
+              // Add a small icon via ::before-like span
+              const icon = document.createElement('span');
+              icon.textContent = '↕';
+              icon.style.marginRight = '8px';
+              icon.ariaHidden = 'true';
+              btn.prepend(icon);
+              document.body.appendChild(btn);
+              btn.addEventListener('click', () => {
+                // Zoom to ~4000x4000 visible cells at current center
+                const center = map.getCenter();
+                const pt = map.project(center);
+                const g = screenToGrid(pt.x, pt.y);
+                autoZoomToCell(g.x, g.y, 4000);
+              });
+            })();
         });
 
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
-            updateZoomHint();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
-            if (vc.x > 4000 || vc.y > 4000) {
-                // Silenced periodic zoom-out notification
-            }
+            const zh = document.getElementById('zoomHint');
+            if (zh) zh.style.display = (vc.x > 4000 || vc.y > 4000) ? 'flex' : 'none';
         });
 
-        map.on('moveend', () => { updateZoomHint(); });
+        // Also update zoom hint on move
+        map.on('move', () => {
+            const vc = getVisibleGridCells();
+            const zh = document.getElementById('zoomHint');
+            if (zh) zh.style.display = (vc.x > 4000 || vc.y > 4000) ? 'flex' : 'none';
+        });
 
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
