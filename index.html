@@ -789,6 +789,22 @@
               setInterval(pollUpdates, 2000);
             })();
 
+            // Keep UI in sync with auth changes (after OAuth redirect, logout, etc.)
+            if (supabase && supabase.auth && typeof supabase.auth.onAuthStateChange === 'function') {
+              supabase.auth.onAuthStateChange((_event, session) => {
+                const user = session?.user || null;
+                if (user) {
+                  USER_ID = user.id;
+                  USER_NAME = user.user_metadata?.full_name || user.email || 'User';
+                  USER_AVATAR = user.user_metadata?.avatar_url || null;
+                } else {
+                  USER_ID = null; USER_NAME = null; USER_AVATAR = null;
+                }
+                renderAuthUI(user);
+                initChargesForUser();
+              });
+            }
+
             // Auth UI events
             document.addEventListener('DOMContentLoaded', () => {
               const loginBtn = document.getElementById('loginButton');
@@ -1654,11 +1670,14 @@
             });
             
             // Toggle color palette when paint button is clicked and enable paint mode
-            paintButton.addEventListener('click', () => {
+            paintButton.addEventListener('click', async () => {
+                await ensureAuth();
                 if (!USER_ID) { // require sign-in first
                     showAuthPrompt();
                     return;
                 }
+                await serverGetCharges();
+                updateChargesUI();
                 const colorPalette = document.getElementById('colorPalette');
                 colorPalette.classList.toggle('visible');
                 isPaintMode = true;
