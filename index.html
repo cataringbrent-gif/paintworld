@@ -487,14 +487,31 @@
             color: #fff;
             box-shadow: 0 2px 10px rgba(52,152,255,0.25);
         }
+        #userBox { position: fixed; top: 24px; right: 24px; z-index:1500; display:flex; align-items:center; gap:10px; }
         #profilePic {
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            display: none;
-            cursor: pointer;
+            object-fit: cover;
             border: 2px solid #fff;
             box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+        }
+        #shopButton {
+            position: absolute;
+            top: 52px; /* just below the 40px avatar + margin */
+            right: 0;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(0,0,0,0.1);
+            background: rgba(255,255,255,0.95);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+            color: #1f2937;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: none; /* shown when logged in */
+            z-index: 1500;
+            backdrop-filter: blur(6px);
         }
         #profileDropdown {
             position: absolute;
@@ -534,6 +551,67 @@
           <label for="sbUrlInput">Project URL</label>
           <input id="sbUrlInput" class="sb-input" placeholder="https://YOUR_PROJECT.supabase.co" />
         </div>
+
+    <!-- Pigments Shop Modal -->
+    <div id="pigmentShopOverlay" class="store-overlay" aria-hidden="true">
+      <div class="store-modal" role="dialog" aria-modal="true" aria-labelledby="pigmentShopTitle">
+        <div class="store-header">
+          <div class="store-title" id="pigmentShopTitle">🎨 Pigments</div>
+          <div class="store-balance" id="pigmentShopBalance">0 Pigments 🎨</div>
+          <button class="store-close" id="pigmentCloseBtn" aria-label="Close">✕</button>
+        </div>
+        <div class="store-content">
+          <div class="store-section">
+            <h3>💧 Droplets</h3>
+            <div style="color:#6b7280; font-weight:600; margin: 8px 0 14px 0;">You gain 1 droplet per pixel painted and 500 droplets per level</div>
+            <div class="item-grid">
+              <div class="item-card">
+                <div class="item-title" style="font-size:20px;">25,000 Droplets</div>
+                <div class="item-sub">+0 bonus</div>
+                <div class="item-actions">
+                  <button class="buy-btn pgBuy" data-amount="25000" data-price="$5.00">$5.00</button>
+                </div>
+              </div>
+              <div class="item-card">
+                <div class="item-title" style="font-size:20px;">78,750 Droplets</div>
+                <div class="item-sub">75,000 Droplets +3,750 bonus</div>
+                <div class="item-actions">
+                  <button class="buy-btn pgBuy" data-amount="78750" data-price="$15.00">$15.00</button>
+                </div>
+              </div>
+              <div class="item-card">
+                <div class="item-title" style="font-size:20px;">165,000 Droplets</div>
+                <div class="item-sub">150,000 Droplets +15,000 bonus</div>
+                <div class="item-actions">
+                  <button class="buy-btn pgBuy" data-amount="165000" data-price="$30.00">$30.00</button>
+                </div>
+              </div>
+              <div class="item-card">
+                <div class="item-title" style="font-size:20px;">287,500 Droplets</div>
+                <div class="item-sub">250,000 Droplets +37,500 bonus</div>
+                <div class="item-actions">
+                  <button class="buy-btn pgBuy" data-amount="287500" data-price="$50.00">$50.00</button>
+                </div>
+              </div>
+              <div class="item-card">
+                <div class="item-title" style="font-size:20px;">450,000 Droplets</div>
+                <div class="item-sub">375,000 Droplets +75,000 bonus</div>
+                <div class="item-actions">
+                  <button class="buy-btn pgBuy" data-amount="450000" data-price="$75.00">$75.00</button>
+                </div>
+              </div>
+              <div class="item-card">
+                <div class="item-title" style="font-size:20px;">625,000 Droplets</div>
+                <div class="item-sub">500,000 Droplets +125,000 bonus</div>
+                <div class="item-actions">
+                  <button class="buy-btn pgBuy" data-amount="625000" data-price="$100.00">$100.00</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
         <div class="sb-field">
           <label for="sbKeyInput">Anon Key</label>
           <input id="sbKeyInput" class="sb-input" placeholder="eyJhbGciOi..." />
@@ -546,9 +624,10 @@
     </div>
 
     <!-- Auth/User Box -->
-    <div id="userBox" style="display:flex;">
+    <div id="userBox">
         <button id="loginButton" title="Log in">Log In</button>
         <img id="profilePic" alt="Profile"/>
+        <button id="shopButton" title="Shop">Shop</button>
         <div id="profileDropdown">
             <div id="dropdownHeader">
                 <img id="dropdownProfilePic" alt="Profile"/>
@@ -556,6 +635,53 @@
             </div>
             <button id="logoutButton">Log out</button>
         </div>
+    </div>
+
+    <!-- Store Modal -->
+    <div id="storeOverlay" class="store-overlay" aria-hidden="true">
+      <div class="store-modal" role="dialog" aria-modal="true" aria-labelledby="storeTitle">
+        <div class="store-header">
+          <div class="store-title" id="storeTitle">🛍️ Store</div>
+          <div class="store-balance" id="storeBalance">0 Pigments 🎨</div>
+          <button class="store-close" id="storeCloseBtn" aria-label="Close">✕</button>
+        </div>
+        <div class="store-content">
+          <div class="store-section">
+            <h3>🔌 Items</h3>
+            <div class="item-grid">
+              <div class="item-card" id="itemMaxCapacity">
+                <div class="item-icon">⬆️</div>
+                <div class="item-title">+5 Max Capacity</div>
+                <div class="item-sub">Increase your maximum paint charges capacity</div>
+                <div class="item-actions">
+                  <div class="qty"><button id="mcMinus">-</button><span id="mcQty">1</span><button id="mcPlus">+</button></div>
+                  <button class="buy-btn" id="mcBuyBtn" disabled><span id="mcPrice">500</span><span>Pigments 🎨</span></button>
+                </div>
+              </div>
+              <div class="item-card" id="itemPaintCharges">
+                <div class="item-icon">🖌️</div>
+                <div class="item-title">+30 Paint Charges</div>
+                <div class="item-sub">Recharge paint charges</div>
+                <div class="item-actions">
+                  <div class="qty"><button id="pcMinus">-</button><span id="pcQty">1</span><button id="pcPlus">+</button></div>
+                  <button class="buy-btn" id="pcBuyBtn" disabled><span id="pcPrice">500</span><span>Pigments 🎨</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="store-section">
+            <h3>🗺️ Territory</h3>
+            <div class="profile-box">
+              <div class="pfp-placeholder">PFP</div>
+              <div class="pfp-details">
+                <div class="pfp-title">Territory</div>
+                <div class="pfp-sub">Coming soon</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Auth Prompt Modal (shown when clicking Paint while signed out) -->
@@ -684,6 +810,9 @@
             // Per-user paint charges
             const DEFAULT_CAPACITY = 100;
             const DEFAULT_CHARGES = 100;
+            const PIGMENT_COST_MAX_CAP = 500; // per +5 capacity
+            const PIGMENT_COST_CHARGES = 500; // per +30 charges
+            let USER_PIGMENTS = 0;
             const RECHARGE_SECONDS = 30; // 1 charge per 30s when not full
             let USER_CAPACITY = DEFAULT_CAPACITY;
             let USER_CHARGES = DEFAULT_CHARGES;
@@ -735,7 +864,7 @@
               if (supabase) {
                 await supabase.from('user_paints').update({
                   charges: USER_CHARGES,
-                  last_refill_at: new Date(lastRefillAt).toISOString(),
+                  last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
                   capacity: USER_CAPACITY
                 }).eq('user_id', USER_ID);
               }
@@ -764,7 +893,8 @@
                   capacity: USER_CAPACITY,
                   charges: USER_CHARGES,
                   regen_seconds: RECHARGE_SECONDS,
-                  last_refill_at: new Date(lastRefillAt).toISOString()
+                  last_refill_at: new Date(lastRefillAt).toISOString(),
+                  pigments: USER_PIGMENTS
                 });
               } else {
                 USER_CAPACITY = Math.max(1, data.capacity ?? DEFAULT_CAPACITY);
@@ -772,9 +902,119 @@
                 // Use server anchor if present, but only keep it when below capacity
                 const serverAnchor = data.last_refill_at ? new Date(data.last_refill_at).getTime() : null;
                 lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? (serverAnchor || Date.now()) : null;
+                USER_PIGMENTS = Math.max(0, data.pigments ?? 0);
               }
               updatePaintButtonUI();
+              updateStoreUI();
               startRegenTimer();
+            }
+
+            // Store helpers
+            function openStore() {
+                const o = document.getElementById('storeOverlay');
+                if (!o) return;
+                o.style.display = 'flex';
+                o.setAttribute('aria-hidden', 'false');
+                document.body.style.overflow = 'hidden';
+                updateStoreUI();
+            }
+            function closeStore() {
+                const o = document.getElementById('storeOverlay');
+                if (!o) return;
+                o.style.display = 'none';
+                o.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            }
+
+            function openPigmentShop() {
+                const o = document.getElementById('pigmentShopOverlay');
+                if (!o) return;
+                updatePigmentShopUI();
+                o.style.display = 'flex';
+                o.setAttribute('aria-hidden', 'false');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closePigmentShop() {
+                const o = document.getElementById('pigmentShopOverlay');
+                if (!o) return;
+                o.style.display = 'none';
+                o.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            }
+
+            function updateStoreUI() {
+                const balEl = document.getElementById('storeBalance');
+                if (balEl) balEl.textContent = `${USER_PIGMENTS} Pigments `;
+                const mcQtyEl = document.getElementById('mcQty');
+                const pcQtyEl = document.getElementById('pcQty');
+                const mcPriceEl = document.getElementById('mcPrice');
+                const pcPriceEl = document.getElementById('pcPrice');
+                const mcBuy = document.getElementById('mcBuyBtn');
+                const pcBuy = document.getElementById('pcBuyBtn');
+                const mcQty = parseInt(mcQtyEl?.textContent || '1', 10);
+                const pcQty = parseInt(pcQtyEl?.textContent || '1', 10);
+                const mcCost = mcQty * PIGMENT_COST_MAX_CAP;
+                const pcCost = pcQty * PIGMENT_COST_CHARGES;
+                if (mcPriceEl) mcPriceEl.textContent = String(mcCost);
+                if (pcPriceEl) pcPriceEl.textContent = String(pcCost);
+                if (mcBuy) mcBuy.disabled = USER_PIGMENTS < mcCost || !USER_ID;
+                if (pcBuy) pcBuy.disabled = USER_PIGMENTS < pcCost || !USER_ID;
+            }
+
+            function updatePigmentShopUI() {
+                const balEl = document.getElementById('pigmentShopBalance');
+                if (balEl) balEl.textContent = `${USER_PIGMENTS} Pigments `;
+            }
+
+            function adjustQty(spanId, delta, min = 1, max = 99) {
+                const el = document.getElementById(spanId);
+                if (!el) return;
+                const cur = parseInt(el.textContent || '1', 10);
+                const next = Math.min(max, Math.max(min, cur + delta));
+                el.textContent = String(next);
+                updateStoreUI();
+            }
+
+            async function purchaseMaxCapacity() {
+                if (!USER_ID || !supabase) { showNotification('Please sign in'); return; }
+                const qty = parseInt(document.getElementById('mcQty')?.textContent || '1', 10);
+                const cost = qty * PIGMENT_COST_MAX_CAP;
+                if (USER_PIGMENTS < cost) { showNotification('Not enough Pigments '); return; }
+                USER_PIGMENTS -= cost;
+                USER_CAPACITY += qty * 5;
+                // Do not modify current charges here
+                updateStoreUI();
+                updatePaintButtonUI();
+                const { error } = await supabase.from('user_paints').update({
+                    pigments: USER_PIGMENTS,
+                    capacity: USER_CAPACITY
+                }).eq('user_id', USER_ID);
+                if (error) { console.error('purchaseMaxCapacity error', error); showNotification('Purchase failed'); return; }
+                showNotification('Capacity increased');
+            }
+
+            async function purchaseCharges() {
+                if (!USER_ID || !supabase) { showNotification('Please sign in'); return; }
+                const qty = parseInt(document.getElementById('pcQty')?.textContent || '1', 10);
+                const cost = qty * PIGMENT_COST_CHARGES;
+                if (USER_PIGMENTS < cost) { showNotification('Not enough Pigments '); return; }
+                // Top up charges but cap at capacity
+                const addCharges = qty * 30;
+                const room = Math.max(0, USER_CAPACITY - USER_CHARGES);
+                const applied = Math.min(room, addCharges);
+                USER_PIGMENTS -= cost;
+                USER_CHARGES += applied;
+                if (USER_CHARGES >= USER_CAPACITY) { lastRefillAt = null; }
+                updateStoreUI();
+                updatePaintButtonUI();
+                const { error } = await supabase.from('user_paints').update({
+                    pigments: USER_PIGMENTS,
+                    charges: USER_CHARGES,
+                    last_refill_at: USER_CHARGES < USER_CAPACITY ? new Date().toISOString() : null
+                }).eq('user_id', USER_ID);
+                if (error) { console.error('purchaseCharges error', error); showNotification('Purchase failed'); return; }
+                showNotification('Charges recharged');
             }
 
             // Store painted cells: "x,y" -> { color, owner }
@@ -797,6 +1037,7 @@
             function renderAuthUI(user) {
               const loginBtn = document.getElementById('loginButton');
               const profilePic = document.getElementById('profilePic');
+              const shopBtn = document.getElementById('shopButton');
               const dropdownPic = document.getElementById('dropdownProfilePic');
               const dropdownName = document.getElementById('dropdownUsername');
               const dropdown = document.getElementById('profileDropdown');
@@ -804,6 +1045,7 @@
               if (!user) {
                 loginBtn.style.display = 'inline-block';
                 profilePic.style.display = 'none';
+                if (shopBtn) shopBtn.style.display = 'none';
                 dropdown.style.display = 'none';
                 return;
               }
@@ -813,6 +1055,8 @@
               if (pic) { profilePic.src = pic; dropdownPic.src = pic; }
               dropdownName.textContent = name;
               profilePic.style.display = 'block';
+              if (shopBtn) shopBtn.style.display = 'inline-block';
+              dropdown.style.display = 'flex';
             }
 
             function showAuthPrompt() { const m = document.getElementById('authPromptModal'); if (m) m.style.display = 'flex'; }
@@ -830,7 +1074,7 @@
               USER_NAME = null;
               USER_AVATAR = null;
               stopRegenTimer();
-              USER_CAPACITY = DEFAULT_CAPACITY; USER_CHARGES = DEFAULT_CHARGES; lastRefillAt = null;
+              USER_CAPACITY = DEFAULT_CAPACITY; USER_CHARGES = DEFAULT_CHARGES; lastRefillAt = null; USER_PIGMENTS = 0; updateStoreUI();
               renderAuthUI(null);
               updatePaintButtonUI();
             }
@@ -890,6 +1134,7 @@
               const profilePic = document.getElementById('profilePic');
               const dropdown = document.getElementById('profileDropdown');
               const logoutBtn = document.getElementById('logoutButton');
+              const shopBtn = document.getElementById('shopButton');
               const googleBtn = document.getElementById('googleSignInBtn');
               const authCancelBtn = document.getElementById('authCancelBtn');
 
@@ -906,6 +1151,62 @@
                 }
               });
               logoutBtn?.addEventListener('click', () => logout());
+              shopBtn?.addEventListener('click', () => {
+                openStore();
+              });
+              // Store modal close handlers
+              const storeOverlay = document.getElementById('storeOverlay');
+              const storeCloseBtn = document.getElementById('storeCloseBtn');
+              storeCloseBtn?.addEventListener('click', closeStore);
+              storeOverlay?.addEventListener('mousedown', (e) => {
+                if (e.target === storeOverlay) closeStore();
+              });
+              document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeStore();
+              });
+
+              // Store quantity steppers
+              const mcMinus = document.getElementById('mcMinus');
+              const mcPlus = document.getElementById('mcPlus');
+              const pcMinus = document.getElementById('pcMinus');
+              const pcPlus = document.getElementById('pcPlus');
+              const mcBuyBtn = document.getElementById('mcBuyBtn');
+              const pcBuyBtn = document.getElementById('pcBuyBtn');
+              const storeBalance = document.getElementById('storeBalance');
+              const pigmentOverlay = document.getElementById('pigmentShopOverlay');
+              const pigmentCloseBtn = document.getElementById('pigmentCloseBtn');
+              const pigmentBalance = document.getElementById('pigmentShopBalance');
+
+              mcMinus?.addEventListener('click', () => { adjustQty('mcQty', -1, 1, 99); });
+              mcPlus?.addEventListener('click', () => { adjustQty('mcQty', 1, 1, 99); });
+              pcMinus?.addEventListener('click', () => { adjustQty('pcQty', -1, 1, 99); });
+              pcPlus?.addEventListener('click', () => { adjustQty('pcQty', 1, 1, 99); });
+              mcBuyBtn?.addEventListener('click', () => purchaseMaxCapacity());
+              pcBuyBtn?.addEventListener('click', () => purchaseCharges());
+
+              // Open Pigments shop when balance is clicked
+              storeBalance?.addEventListener('click', () => {
+                if (!USER_ID) { showNotification('Please sign in'); return; }
+                openPigmentShop();
+              });
+              pigmentCloseBtn?.addEventListener('click', closePigmentShop);
+              pigmentOverlay?.addEventListener('mousedown', (e) => { if (e.target === pigmentOverlay) closePigmentShop(); });
+              document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePigmentShop(); });
+
+              // Hook purchase buttons in pigment shop
+              document.querySelectorAll('.pgBuy').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  if (!USER_ID || !supabase) { showNotification('Please sign in'); return; }
+                  const amt = parseInt(btn.getAttribute('data-amount') || '0', 10);
+                  if (!amt) return;
+                  USER_PIGMENTS += amt;
+                  updateStoreUI();
+                  updatePigmentShopUI();
+                  const { error } = await supabase.from('user_paints').update({ pigments: USER_PIGMENTS }).eq('user_id', USER_ID);
+                  if (error) { console.error('pigment purchase update error', error); showNotification('Purchase failed'); return; }
+                  showNotification(`Added ${amt.toLocaleString()} Pigments 🎨`);
+                });
+              });
             });
 
             // Paint action -> Supabase upsert/delete
@@ -957,19 +1258,27 @@
                     .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
                   if (error) { console.error('Upsert error', error); return; }
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  // Spend a charge if signed-in
+                  // Award 1 Pigment per painted cell
+                  if (USER_ID) {
+                    USER_PIGMENTS += 1;
+                    updateStoreUI();
+                  }
+                  // Spend a charge if needed
                   if (USER_ID && spendCharge) {
-                    const prevCharges = USER_CHARGES;
                     USER_CHARGES = Math.max(0, USER_CHARGES - 1);
                     // Start cooldown only when charges drop below capacity; clear if still >= capacity
                     lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                    updatePaintButtonUI();
-                    // Persist spend
-                    await supabase.from('user_paints').update({
-                      charges: USER_CHARGES,
-                      last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                      capacity: USER_CAPACITY
-                    }).eq('user_id', USER_ID);
+                  }
+                  updatePaintButtonUI();
+                  // Persist user state
+                  if (USER_ID) {
+                    const payload = { pigments: USER_PIGMENTS };
+                    if (spendCharge) {
+                      payload.charges = USER_CHARGES;
+                      payload.last_refill_at = lastRefillAt ? new Date(lastRefillAt).toISOString() : null;
+                      payload.capacity = USER_CAPACITY;
+                    }
+                    await supabase.from('user_paints').update(payload).eq('user_id', USER_ID);
                   }
               }
               updatePaintedCellsDisplay();
@@ -1562,7 +1871,27 @@
                 const center = map.getCenter();
                 const pt = map.project(center);
                 const g = screenToGrid(pt.x, pt.y);
-                autoZoomToCell(g.x, g.y, 4000);
+                // Use a slightly smaller target to guarantee ≤ 4000 in both dimensions after rounding
+                autoZoomToCell(g.x, g.y, 3800);
+                // Safeguard: after zoom completes, ensure paints threshold is met (≤ 4000x4000)
+                let attempts = 0;
+                const maxAttempts = 6; // a few small nudges max
+                const ensurePaintsVisible = () => {
+                  const vc = getVisibleGridCells();
+                  if (vc.x <= 4000 && vc.y <= 4000) {
+                    map.off('moveend', ensurePaintsVisible);
+                    map.off('zoomend', ensurePaintsVisible);
+                    return;
+                  }
+                  if (attempts++ < maxAttempts) {
+                    map.easeTo({ zoom: map.getZoom() + 0.25, duration: 120 });
+                  } else {
+                    map.off('moveend', ensurePaintsVisible);
+                    map.off('zoomend', ensurePaintsVisible);
+                  }
+                };
+                map.on('moveend', ensurePaintsVisible);
+                map.on('zoomend', ensurePaintsVisible);
               });
             })();
         });
