@@ -818,6 +818,13 @@
               googleBtn?.addEventListener('click', () => loginWithGoogle());
               authCancelBtn?.addEventListener('click', () => hideAuthPrompt());
               profilePic?.addEventListener('click', () => {
+                if (!dropdown) return;
+                dropdown.style.display = dropdown.style.display === 'flex' ? 'none' : 'flex';
+              });
+              logoutBtn?.addEventListener('click', () => logout());
+              googleBtn?.addEventListener('click', () => loginWithGoogle());
+              authCancelBtn?.addEventListener('click', () => hideAuthPrompt());
+              profilePic?.addEventListener('click', () => {
                 if (dropdown.style.display === 'flex') dropdown.style.display = 'none';
                 else dropdown.style.display = 'flex';
               });
@@ -1678,11 +1685,19 @@
             
             // Toggle color palette when paint button is clicked and enable paint mode
             paintButton.addEventListener('click', async () => {
-                await ensureAuth();
-                if (!USER_ID) { // require sign-in first
+                if (!supabase) return;
+                // Always check live session to avoid stale USER_ID
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) {
+                    // Strictly block and show auth prompt when signed out
                     showAuthPrompt();
                     return;
                 }
+                // Update globals and UI state, then fetch server charges
+                USER_ID = user.id;
+                USER_NAME = user.user_metadata?.full_name || user.email || 'User';
+                USER_AVATAR = user.user_metadata?.avatar_url || null;
+                updateChargesUI();
                 await serverGetCharges();
                 updateChargesUI();
                 const colorPalette = document.getElementById('colorPalette');
