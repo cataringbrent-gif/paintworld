@@ -719,7 +719,7 @@
 
             async function tickRegen() {
               if (!USER_ID) return;
-              if (USER_CHARGES >= USER_CAPACITY) { updatePaintButtonUI(); return; }
+              if (USER_CHARGES >= USER_CAPACITY) { lastRefillAt = null; updatePaintButtonUI(); return; }
               if (!lastRefillAt) lastRefillAt = Date.now();
               const now = Date.now();
               const deltaSec = Math.floor((now - lastRefillAt) / 1000);
@@ -768,9 +768,10 @@
                 });
               } else {
                 USER_CAPACITY = Math.max(1, data.capacity ?? DEFAULT_CAPACITY);
-                USER_CHARGES = Math.min(USER_CAPACITY, Math.max(0, data.charges ?? DEFAULT_CHARGES));
-                // Use server anchor if present
-                lastRefillAt = data.last_refill_at ? new Date(data.last_refill_at).getTime() : Date.now();
+                USER_CHARGES = Math.max(0, data.charges ?? DEFAULT_CHARGES); // allow > capacity
+                // Use server anchor if present, but only keep it when below capacity
+                const serverAnchor = data.last_refill_at ? new Date(data.last_refill_at).getTime() : null;
+                lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? (serverAnchor || Date.now()) : null;
               }
               updatePaintButtonUI();
               startRegenTimer();
@@ -947,13 +948,15 @@
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   // Spend a charge if signed-in
                   if (USER_ID) {
+                    const prevCharges = USER_CHARGES;
                     USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    lastRefillAt = Date.now();
+                    // Start cooldown only when charges drop below capacity; clear if still >= capacity
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
                     updatePaintButtonUI();
                     // Persist spend
                     await supabase.from('user_paints').update({
                       charges: USER_CHARGES,
-                      last_refill_at: new Date(lastRefillAt).toISOString(),
+                      last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
                       capacity: USER_CAPACITY
                     }).eq('user_id', USER_ID);
                   }
@@ -1492,7 +1495,7 @@
                 source: 'painted-cells',
                 paint: {
                     'fill-color': ['get', 'color'],
-                    'fill-opacity': 0.8,
+                    'fill-opacity': 1.0,
                     'fill-outline-color': 'transparent'
                 },
                 layout: {
