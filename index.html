@@ -1464,8 +1464,8 @@
                 return;
             }
 
-            // When viewport shows >= 2000 x 2000 cells: auto-zoom to ~100 x 100 at the target cell, do not paint yet
-            if (vc.x >= 2000 || vc.y >= 2000) {
+            // Between 1000 and 4000: auto-zoom to ~100 x 100 at the target cell, do not paint yet
+            if (vc.x > 1000 || vc.y > 1000) {
                 autoZoomToCell(gridCoords.x, gridCoords.y, 100);
                 return;
             }
