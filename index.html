@@ -579,6 +579,19 @@
     
     <!-- Notification for max cells reached -->
     <div class="notification" id="notification">No more charges</div>
+
+    <!-- Zoom hint pill (shown when viewport > 4000x4000 cells) -->
+    <div id="zoomHint" style="
+      position:fixed; top:16px; left:50%; transform:translateX(-50%);
+      display:none; padding:10px 16px; border-radius:999px;
+      background:rgba(255,255,255,0.92); color:#1f2a37; font-weight:600;
+      box-shadow:0 4px 16px rgba(0,0,0,0.12); border:1px solid rgba(15,23,42,0.08);
+      backdrop-filter:saturate(180%) blur(8px); -webkit-backdrop-filter:saturate(180%) blur(8px);
+      font-size:14px; line-height:1; z-index:1000; gap:8px; align-items:center;
+    ">
+      <span style="margin-right:8px; font-size:16px;">🔎➕</span>
+      <span>Zoom in to see the pixels</span>
+    </div>
     
     <!-- Paint button -->
     <button class="paint-button" id="paintButton" style="display:flex; align-items:center; justify-content:center; background:#3498ff; color:#fff; border:none; border-radius:24px; padding:14px 24px; font-size:1.25rem; font-weight:700; box-shadow:0 2px 12px rgba(52,152,255,0.18); cursor:pointer; min-width:120px; gap:8px;">
@@ -725,6 +738,7 @@
             async function loginWithGoogle() {
               if (!supabase) return;
               await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+              initChargesForUser();
             }
 
             async function logout() {
@@ -734,6 +748,8 @@
               USER_NAME = null;
               USER_AVATAR = null;
               renderAuthUI(null);
+              // Reset charges to guest bucket
+              initChargesForUser();
             }
 
             function mergeRow(row) {
@@ -779,6 +795,8 @@
               if (!supabase) return;
               const user = await ensureAuth();
               renderAuthUI(user);
+              // Initialize charges for current auth user
+              initChargesForUser();
               await initialLoad();
               // Start polling every 2s until Realtime is available
               setInterval(pollUpdates, 2000);
@@ -833,6 +851,10 @@
                   if (error) { console.error('Delete error', error); return; }
                   paintedCells.delete(cellKey);
               } else {
+                  // Enforce charges server-side
+                  if (!USER_ID) { showNotification('Sign in to paint'); return; }
+                  const spend = await serverSpendCharge(1);
+                  if (!spend.allowed) { showNotification('No more charges'); updateChargesUI(); return; }
                   if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
                       showNotification();
                       return;
@@ -842,6 +864,8 @@
                     .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
                   if (error) { console.error('Upsert error', error); return; }
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+                  // UI already updated from serverSpendCharge; refresh display
+                  updateChargesUI();
               }
               updatePaintedCellsDisplay();
               updateCellCounter();
@@ -1118,23 +1142,8 @@
         }
         
         function showNotification(message) {
-            const notification = document.getElementById('notification');
-            if (!notification) return;
-            if (defaultNotificationText === null) {
-                defaultNotificationText = notification.textContent;
-            }
-            if (message) {
-                notification.textContent = message;
-            }
-            notification.classList.add('show');
-            
-            // Hide notification after 3 seconds and restore default text if we changed it
-            setTimeout(() => {
-                notification.classList.remove('show');
-                if (message) {
-                    notification.textContent = defaultNotificationText;
-                }
-            }, 3000);
+            // Notifications disabled per request
+            return;
         }
         
         function checkPaintingEnabled() {
@@ -1167,11 +1176,7 @@
             const maxZoom = typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : 22;
             const targetZoom = Math.min(currentZoom + delta, maxZoom);
 
-            isAutoZooming = true;
-            map.flyTo({ center: center, zoom: targetZoom, duration: 800 });
-            map.once('moveend', () => {
-                isAutoZooming = false;
-            });
+            map.easeTo({ center, zoom: targetZoom, duration: 600 });
         }
 
         // Handle mouse move for hover
@@ -1249,30 +1254,25 @@
             // Determine grid coordinates from current hover or click location
             const gridCoords = currentHoveredCell || screenToGrid(e.point.x, e.point.y);
 
-            // If palette is not visible, show pixel info box and do nothing else
+            // If palette is not visible, select a cell at any zoom and optionally auto-zoom to 4000x4000
             if (!isPaletteVisible()) {
-                // Only allow selection when viewport shows <= 4000 x 4000 cells (same as hover highlight)
                 const visibleCells = getVisibleGridCells();
-                const canSelect = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-                if (!canSelect) {
-                    const pixelInfo = document.getElementById('pixelInfo');
-                    if (pixelInfo) pixelInfo.style.display = 'none';
-                    // Show notice to zoom in
-                    showNotification('Zoom in to select a pixel');
-                    return;
-                }
                 const wrapped = getWrappedCoordinates(gridCoords.x, gridCoords.y);
-                // Pass both world and display coordinates so we can look up owner correctly
+                // Always show pixel info
                 showPixelInfo(gridCoords.x, gridCoords.y, wrapped.x, wrapped.y);
+                // If user is beyond hover threshold, zoom in just enough to 4000x4000
+                if (visibleCells.x > HOVER_THRESHOLD || visibleCells.y > HOVER_THRESHOLD) {
+                    autoZoomToCell(gridCoords.x, gridCoords.y, 4000);
+                }
                 return;
             }
 
             // Palette is visible; enforce painting rules based on visible cells
             const vc = getVisibleGridCells();
 
-            // > 4000 x 4000: block and notify
+            // > 4000 x 4000: auto-zoom to ~100 x 100 at the target cell, do not paint yet
             if (vc.x > 4000 || vc.y > 4000) {
-                showNotification('Zoom in to paint');
+                autoZoomToCell(gridCoords.x, gridCoords.y, 100);
                 return;
             }
 
@@ -1391,17 +1391,19 @@
             // Initial grid update
             updateGridVisibility();
             updateGrid();
+            updateZoomHintVisibility();
         });
 
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
+            updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
                 const now = Date.now();
                 if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
-                    showNotification('Zoomed out too far to paint. Zoom in.');
+                    // Notifications disabled; keep throttling state but do nothing
                     lastZoomNoticeTime = now;
                 }
             }
@@ -1546,6 +1548,64 @@
             const pixelActionPaint = document.getElementById('pixelActionPaint');
             const pixelActionFavorite = document.getElementById('pixelActionFavorite');
             const pixelActionShare = document.getElementById('pixelActionShare');
+            const paintButtonText = document.getElementById('paintButtonText');
+
+            // ======= Paint charges (per-user) =======
+            // Server-enforced via Supabase RPC; we'll keep a minimal local fallback
+            const CHARGES_MAX = 100; // fallback only; server provides real max
+            let charges = CHARGES_MAX;
+            let serverMax = CHARGES_MAX;
+            let nextRestoreSeconds = 0; // server-provided remaining seconds for next +1
+
+            // Server RPC helpers
+            async function serverGetCharges() {
+              if (!supabase || !USER_ID) return null;
+              try {
+                const { data, error } = await supabase.rpc('rpc_get_charges');
+                if (error) { console.error('rpc_get_charges error', error); return null; }
+                const row = Array.isArray(data) ? data[0] : data; // supabase-js returns array for setof
+                if (!row) return null;
+                charges = typeof row.charges === 'number' ? row.charges : charges;
+                serverMax = typeof row.max_charges === 'number' ? row.max_charges : serverMax;
+                nextRestoreSeconds = typeof row.next_restore_seconds === 'number' ? row.next_restore_seconds : nextRestoreSeconds;
+                return row;
+              } catch (e) { console.error(e); return null; }
+            }
+            async function serverSpendCharge(amount = 1) {
+              if (!supabase || !USER_ID) return { allowed: false };
+              try {
+                const { data, error } = await supabase.rpc('rpc_spend_charge', { p_amount: amount });
+                if (error) { console.error('rpc_spend_charge error', error); return { allowed: false }; }
+                const row = Array.isArray(data) ? data[0] : data;
+                if (row) {
+                  if (typeof row.allowed === 'boolean') {
+                    charges = typeof row.charges === 'number' ? row.charges : charges;
+                    serverMax = typeof row.max_charges === 'number' ? row.max_charges : serverMax;
+                    nextRestoreSeconds = typeof row.next_restore_seconds === 'number' ? row.next_restore_seconds : nextRestoreSeconds;
+                    return row;
+                  }
+                }
+                return { allowed: false };
+              } catch (e) { console.error(e); return { allowed: false }; }
+            }
+            function formatCountdown() {
+              if (charges >= serverMax) return '';
+              const s = Math.max(0, Math.ceil(nextRestoreSeconds));
+              const mm = Math.floor(s / 60);
+              const ss = String(s % 60).padStart(2, '0');
+              return ` (${mm}:${ss})`;
+            }
+            function updateChargesUI() {
+              if (!paintButtonText) return;
+              paintButtonText.textContent = `Paint ${charges}/${serverMax}${formatCountdown()}`;
+              const btn = document.getElementById('paintButton');
+              if (btn) btn.disabled = charges <= 0; // visually disabled depends on browser; styling is custom
+            }
+            function initChargesForUser() {
+              // fetch from server for this user id; if logged out, reset to defaults
+              if (!USER_ID) { charges = CHARGES_MAX; serverMax = CHARGES_MAX; nextRestoreSeconds = 0; updateChargesUI(); return; }
+              serverGetCharges().then(() => updateChargesUI());
+            }
             
             // Generate color swatches in two rows
             colorRow1.innerHTML = '';
@@ -1669,15 +1729,119 @@
                 pixelInfo.style.display = 'block';
                 paintButton.style.display = 'none';
             };
+    
+    // Toggle color palette when paint button is clicked and enable paint mode
+    paintButton.addEventListener('click', () => {
+        if (!USER_ID) { // require sign-in first
+            showAuthPrompt();
+            return;
         }
-        
-        // Initialize palette when DOM is ready
-        document.addEventListener('DOMContentLoaded', () => {
-            initializePalette();
-            updateCellCounter(); // Initialize the cell counter
-        });
+        const colorPalette = document.getElementById('colorPalette');
+        colorPalette.classList.toggle('visible');
+        isPaintMode = true;
+        if (pixelInfo) pixelInfo.style.display = 'none';
+        paintButton.style.display = 'flex';
+        if (colorPalette.classList.contains('visible')) {
+            hasAutoZoomedThisSession = false;
+        }
+    });
+    
+    // Close palette with X button
+    paletteCloseButton.addEventListener('click', () => {
+        document.getElementById('colorPalette').classList.remove('visible');
+    });
 
-        // Google Sign-In removed; using Supabase anonymous auth.
-    </script>
+    // Close pixel info and bring back paint button
+    pixelClose.addEventListener('click', () => {
+        pixelInfo.style.display = 'none';
+        paintButton.style.display = 'flex';
+    });
+
+    // Pixel action buttons
+    if (pixelActionPaint) {
+      pixelActionPaint.addEventListener('click', () => {
+        // Open the palette just like clicking the main paint button
+        paintButton.click();
+      });
+    }
+    if (pixelActionFavorite) {
+      pixelActionFavorite.addEventListener('click', () => {
+        try {
+          const txt = pixelInfoText?.textContent || '';
+          const m = txt.match(/Pixel:\s*(\d+),\s*(\d+)/);
+          if (m) {
+            const fav = JSON.parse(localStorage.getItem('favorites')||'[]');
+            fav.push({ x: Number(m[1]), y: Number(m[2]), t: Date.now() });
+            localStorage.setItem('favorites', JSON.stringify(fav));
+            showNotification('Added to favorites');
+          }
+        } catch {}
+      });
+    }
+    if (pixelActionShare) {
+      pixelActionShare.addEventListener('click', async () => {
+        const txt = pixelInfoText?.textContent || '';
+        const m = txt.match(/Pixel:\s*(\d+),\s*(\d+)/);
+        if (!m) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set('x', m[1]);
+        url.searchParams.set('y', m[2]);
+        try {
+          await navigator.clipboard.writeText(url.toString());
+          showNotification('Link copied');
+        } catch {
+          showNotification('Copy failed');
+        }
+      });
+    }
+
+    // Helper to show pixel info in center-bottom and hide paint button
+    window.showPixelInfo = function(worldX, worldY, displayX, displayY) {
+        if (!pixelInfo || !pixelInfoText) return;
+        // Use world coords for storage lookup
+        const key = `${worldX},${worldY}`;
+        const cell = paintedCells.get(key);
+        // Show wrapped/display coords in UI
+        pixelInfoText.textContent = `Pixel: ${displayX}, ${displayY}`;
+        // Owner row
+        if (!cell) {
+          // Hide the owner row entirely for unpainted cells
+          if (pixelOwnerRow) pixelOwnerRow.style.display = 'none';
+          if (pixelOwnerAvatar) pixelOwnerAvatar.style.display = 'none';
+        } else {
+          const ownerLabel = (cell.owner_name && cell.owner_name.trim()) ? cell.owner_name : shortUser(cell.owner);
+          if (pixelOwnerText) pixelOwnerText.textContent = ownerLabel;
+          if (pixelOwnerRow) pixelOwnerRow.style.display = 'flex';
+          if (cell.owner_avatar && pixelOwnerAvatar) {
+            pixelOwnerAvatar.src = cell.owner_avatar; pixelOwnerAvatar.style.display = 'inline-block';
+          } else if (pixelOwnerAvatar) {
+            pixelOwnerAvatar.style.display = 'none';
+          }
+        }
+        pixelInfo.style.display = 'block';
+        paintButton.style.display = 'none';
+    };
+}
+        
+// Initialize palette when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    initializePalette();
+    updateCellCounter(); // Initialize the cell counter
+    // Start countdown and periodic server refresh
+    let tick = 0;
+    setInterval(() => {
+      if (typeof nextRestoreSeconds === 'number' && nextRestoreSeconds > 0) {
+        nextRestoreSeconds = Math.max(0, nextRestoreSeconds - 1);
+      }
+      updateChargesUI();
+      tick = (tick + 1) % 5;
+      if (tick === 0 && USER_ID) {
+        serverGetCharges().then(() => updateChargesUI());
+      }
+    }, 1000);
+});
+
+// Google Sign-In removed; using Supabase anonymous auth.
+</script>
 
 </body></html>
