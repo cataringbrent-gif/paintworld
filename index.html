@@ -1178,10 +1178,13 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
+            const shouldShowPaints = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
-            if (shouldShowGrid !== gridVisible) {
+            if (map && map.getLayer('grid-lines')) {
+                map.setLayoutProperty('grid-lines', 'visibility', 'none');
+            }
+            if (map && map.getLayer('grid-hover')) {
                 gridVisible = shouldShowGrid;
-                
                 if (gridVisible) {
                     // Only show hover layer (grid lines remain hidden)
                     if (map.getLayer('grid-hover')) {
@@ -1201,6 +1204,11 @@
                         currentHoveredCell = null;
                     }
                 }
+            }
+
+            // Toggle painted cells visibility based on 4000x4000 threshold
+            if (map && map.getLayer('painted-cells')) {
+                map.setLayoutProperty('painted-cells', 'visibility', shouldShowPaints ? 'visible' : 'none');
             }
         }
 
