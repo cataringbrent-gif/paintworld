@@ -921,7 +921,7 @@
               if (color === null) {
                   if (!cell) return; // nothing to erase
                   if (cell.owner !== USER_ID) {
-                      // Silenced: no top red notification; simply block silently
+                      showNotification('You can only delete your own paint.');
                       return;
                   }
                   // Delete row (RLS enforces ownership)
@@ -1178,7 +1178,7 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            const shouldShowPaints = visibleCells.x <= 4001 && visibleCells.y <= 4001;
+            const shouldShowPaints = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
             if (shouldShowGrid !== gridVisible) {
                 gridVisible = shouldShowGrid;
@@ -1203,17 +1203,7 @@
                     }
                 }
             }
-
-            // Ensure painted cells layer respects 4000x4000 visibility rule
-            if (map.getLayer('painted-cells')) {
-                const current = map.getLayoutProperty('painted-cells', 'visibility');
-                const desired = shouldShowPaints ? 'visible' : 'none';
-                if (current !== desired) {
-                    map.setLayoutProperty('painted-cells', 'visibility', desired);
-                }
-            }
         }
-
 
         // Update grid data
         function updateGrid() {
@@ -1397,7 +1387,8 @@
                 if (!canSelect) {
                     const pixelInfo = document.getElementById('pixelInfo');
                     if (pixelInfo) pixelInfo.style.display = 'none';
-                    // Silenced: no top red notification when zoomed too far to select
+                    // Show notice to zoom in
+                    showNotification('Zoom in to select a pixel');
                     return;
                 }
                 const wrapped = getWrappedCoordinates(gridCoords.x, gridCoords.y);
@@ -1409,8 +1400,9 @@
             // Palette is visible; enforce painting rules based on visible cells
             const vc = getVisibleGridCells();
 
-            // > 4000 x 4000: block without notification
+            // > 4000 x 4000: block and notify
             if (vc.x > 4000 || vc.y > 4000) {
+                showNotification('Zoom in to paint');
                 return;
             }
 
@@ -1529,45 +1521,6 @@
             // Initial grid update
             updateGridVisibility();
             updateGrid();
-
-            // Create zoom hint button (top-center)
-            const zoomHint = document.createElement('button');
-            zoomHint.id = 'zoomHint';
-            zoomHint.type = 'button';
-            zoomHint.textContent = 'Zoom in to see the pixels';
-            Object.assign(zoomHint.style, {
-              position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
-              zIndex: '2000', padding: '10px 16px', borderRadius: '20px',
-              border: 'none', background: 'rgba(240,245,255,0.95)', color: '#2643A0',
-              fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', cursor: 'pointer',
-              display: 'none'
-            });
-            document.body.appendChild(zoomHint);
-
-            function isPixelsVisible() {
-              const vc = getVisibleGridCells();
-              return vc.x <= 4001 && vc.y <= 4001;
-            }
-
-            function updateZoomHintVisibility() {
-              if (isPixelsVisible()) zoomHint.style.display = 'none';
-              else zoomHint.style.display = 'flex';
-            }
-
-            function zoomToPixelVisibility() {
-              const vc = getVisibleGridCells();
-              const factorX = vc.x / 4001;
-              const factorY = vc.y / 4001;
-              const factor = Math.max(1, factorX, factorY);
-              const deltaZoom = Math.log2(factor);
-              const targetZoom = Math.min(map.getMaxZoom(), map.getZoom() + deltaZoom + 0.01);
-              map.easeTo({ zoom: targetZoom, duration: 700 });
-            }
-
-            zoomHint.addEventListener('click', zoomToPixelVisibility);
-            // Update visibility initially and on movements/zooms
-            updateZoomHintVisibility();
-            map.on('move', updateZoomHintVisibility);
         });
 
         map.on('zoom', () => {
@@ -1576,13 +1529,13 @@
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
-                // Silenced periodic zoom-out notification
+                const now = Date.now();
+                if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
+                    showNotification('Zoomed out too far to paint. Zoom in.');
+                    lastZoomNoticeTime = now;
+                }
             }
         });
-
-        // Also update visibility on move and resize (defensive)
-        map.on('move', () => { updateGridVisibility(); });
-        map.on('resize', () => { updateGridVisibility(); });
 
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
