@@ -1360,19 +1360,6 @@
             }
         }
 
-        // Show/hide painted cells based on zoom level (visible cell count)
-        function updatePaintLayerVisibility() {
-            if (!map.getLayer('painted-cells')) return;
-            const vc = getVisibleGridCells();
-            // Paints visible when reasonably zoomed in; hidden when far out
-            const showPaints = vc.x <= 4000 && vc.y <= 4000;
-            const desired = showPaints ? 'visible' : 'none';
-            const current = map.getLayoutProperty('painted-cells', 'visibility');
-            if (current !== desired) {
-                map.setLayoutProperty('painted-cells', 'visibility', desired);
-            }
-        }
-
         // Handle mouse leave
         function handleMouseLeave() {
             if (currentHoveredCell) {
@@ -1510,7 +1497,9 @@
                 data: {
                     type: 'FeatureCollection',
                     features: []
-                }
+                },
+                // Ensure tiny polygons are not simplified away at low zooms
+                tolerance: 0
             });
 
             map.addLayer({
@@ -1529,18 +1518,30 @@
 
             // Render any preloaded paints now that the source exists
             updatePaintedCellsDisplay();
-            // Ensure visibility correct for current zoom
-            updatePaintLayerVisibility();
 
             // Initial grid update
             updateGridVisibility();
             updateGrid();
+            // Ensure painted layer visibility respects 4000x4000 threshold on load
+            updatePaintedCellsVisibility();
         });
+
+        // Toggle painted layer visibility depending on visible grid cells
+        function updatePaintedCellsVisibility() {
+            if (!map.getLayer('painted-cells')) return;
+            const vc = getVisibleGridCells();
+            const visible = vc.x <= 4000 && vc.y <= 4000;
+            const current = map.getLayoutProperty('painted-cells', 'visibility');
+            const desired = visible ? 'visible' : 'none';
+            if (current !== desired) {
+                map.setLayoutProperty('painted-cells', 'visibility', desired);
+            }
+        }
 
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
-            updatePaintLayerVisibility();
+            updatePaintedCellsVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
@@ -1550,6 +1551,11 @@
                     lastZoomNoticeTime = now;
                 }
             }
+        });
+
+        // Also update on move to reflect viewport changes without zoom change
+        map.on('move', () => {
+            updatePaintedCellsVisibility();
         });
 
         map.on('mousemove', handleMouseMove);
