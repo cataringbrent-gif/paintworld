@@ -1178,7 +1178,7 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            const shouldShowPaints = visibleCells.x <= 4000 && visibleCells.y <= 4000;
+            const shouldShowPaints = visibleCells.x <= 4001 && visibleCells.y <= 4001;
             
             if (shouldShowGrid !== gridVisible) {
                 gridVisible = shouldShowGrid;
@@ -1546,7 +1546,7 @@
 
             function isPixelsVisible() {
               const vc = getVisibleGridCells();
-              return vc.x <= 4000 && vc.y <= 4000;
+              return vc.x <= 4001 && vc.y <= 4001;
             }
 
             function updateZoomHintVisibility() {
@@ -1556,8 +1556,8 @@
 
             function zoomToPixelVisibility() {
               const vc = getVisibleGridCells();
-              const factorX = vc.x / 4000;
-              const factorY = vc.y / 4000;
+              const factorX = vc.x / 4001;
+              const factorY = vc.y / 4001;
               const factor = Math.max(1, factorX, factorY);
               const deltaZoom = Math.log2(factor);
               const targetZoom = Math.min(map.getMaxZoom(), map.getZoom() + deltaZoom + 0.01);
@@ -1579,6 +1579,10 @@
                 // Silenced periodic zoom-out notification
             }
         });
+
+        // Also update visibility on move and resize (defensive)
+        map.on('move', () => { updateGridVisibility(); });
+        map.on('resize', () => { updateGridVisibility(); });
 
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
