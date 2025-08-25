@@ -1178,7 +1178,6 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            const shouldShowPaints = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD; // show paints only when <= 4000 x 4000
             
             if (shouldShowGrid !== gridVisible) {
                 gridVisible = shouldShowGrid;
@@ -1203,13 +1202,7 @@
                     }
                 }
             }
-
-            // Toggle painted cells visibility with same threshold
-            if (map.getLayer('painted-cells')) {
-                map.setLayoutProperty('painted-cells', 'visibility', shouldShowPaints ? 'visible' : 'none');
-            }
         }
-
 
         // Update grid data
         function updateGrid() {
@@ -1364,6 +1357,19 @@
                     });
                     currentHoveredCell = null;
                 }
+            }
+        }
+
+        // Show/hide painted cells based on zoom level (visible cell count)
+        function updatePaintLayerVisibility() {
+            if (!map.getLayer('painted-cells')) return;
+            const vc = getVisibleGridCells();
+            // Paints visible when reasonably zoomed in; hidden when far out
+            const showPaints = vc.x <= 4000 && vc.y <= 4000;
+            const desired = showPaints ? 'visible' : 'none';
+            const current = map.getLayoutProperty('painted-cells', 'visibility');
+            if (current !== desired) {
+                map.setLayoutProperty('painted-cells', 'visibility', desired);
             }
         }
 
@@ -1523,6 +1529,8 @@
 
             // Render any preloaded paints now that the source exists
             updatePaintedCellsDisplay();
+            // Ensure visibility correct for current zoom
+            updatePaintLayerVisibility();
 
             // Initial grid update
             updateGridVisibility();
@@ -1532,6 +1540,7 @@
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
+            updatePaintLayerVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
