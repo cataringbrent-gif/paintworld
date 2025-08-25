@@ -510,8 +510,6 @@
             padding: 12px;
             min-width: 220px;
         }
-        #shopButton { display:none; padding:8px 10px; border:none; border-radius:10px; cursor:pointer; font-weight:700; background:#fff; color:#3498ff; border:1px solid #e3e6eb; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
-        #shopButton:hover { background:#f8fbff; }
         #dropdownHeader { display: flex; align-items: center; gap: 10px; }
         #dropdownProfilePic { width: 32px; height: 32px; border-radius: 50%; }
         #dropdownUsername { font-weight: 700; }
@@ -524,10 +522,6 @@
         .auth-modal { display: none; position: fixed; inset: 0; z-index: 3500; background: rgba(0,0,0,0.35); align-items: center; justify-content: center; }
         .auth-card { background: #fff; border-radius: 16px; padding: 20px; width: 92%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,0.18); display: flex; flex-direction: column; gap: 12px; }
         .google-btn { padding: 12px 14px; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; background: #fff; color: #333; border: 1px solid #e3e6eb; display: flex; align-items: center; gap: 10px; justify-content: center; }
-
-        /* Store modal explicit centering */
-        #storeModal { display:none; position: fixed; inset:0; z-index:3600; background: rgba(0,0,0,0.35); align-items:center; justify-content:center; }
-        #storeModal .sb-modal-card { margin:auto; }
 
     </style>
 </head>
@@ -554,10 +548,7 @@
     <!-- Auth/User Box -->
     <div id="userBox" style="display:flex;">
         <button id="loginButton" title="Log in">Log In</button>
-        <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-          <img id="profilePic" alt="Profile"/>
-          <button id="shopButton">🛒 Shop</button>
-        </div>
+        <img id="profilePic" alt="Profile"/>
         <div id="profileDropdown">
             <div id="dropdownHeader">
                 <img id="dropdownProfilePic" alt="Profile"/>
@@ -588,58 +579,6 @@
     
     <!-- Notification for max cells reached -->
     <div class="notification" id="notification">No more charges</div>
-
-    <!-- Store Modal -->
-    <div id="storeModal" class="sb-modal" style="z-index:3600;">
-      <div class="sb-modal-card" style="max-width:820px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:18px;">
-            <span>🛒</span>
-            <span>Store</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div id="dropletBadge" style="display:flex; align-items:center; gap:6px; background:#f0f7ff; color:#2563eb; border:1px solid #dbeafe; padding:6px 10px; border-radius:999px; font-weight:800;">
-              <span>💧</span>
-              <span id="dropletCount">0</span>
-              <span>Droplets</span>
-            </div>
-            <button id="storeCloseBtn" class="sb-btn secondary">✕</button>
-          </div>
-        </div>
-        <div style="margin-top:8px; color:#2563eb; font-weight:700; display:flex; align-items:center; gap:8px;">
-          <span>📁 Items</span>
-          <span style="color:#6b7280; font-weight:600;">Get more charges</span>
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px;">
-          <div style="background:#f3f6fb; border-radius:16px; padding:18px; border:1px solid #e5e9f2; display:flex; flex-direction:column; gap:14px;">
-            <div style="font-size:42px; color:#2563eb;">⬆️</div>
-            <div style="font-size:22px; font-weight:800; color:#1f2937;">+5 Max. Charges</div>
-            <div style="color:#6b7280; font-weight:600;">Increase your maximum paint charges capacity</div>
-            <div style="display:flex; align-items:center; gap:10px;">
-              <button id="capDec" class="sb-btn secondary" style="border-radius:50%; width:34px; height:34px;">−</button>
-              <div id="capQty" style="min-width:40px; text-align:center; font-weight:800;">1</div>
-              <button id="capInc" class="sb-btn secondary" style="border-radius:50%; width:34px; height:34px;">+</button>
-            </div>
-            <button id="buyCapacity" class="sb-btn primary" style="opacity:.9; display:flex; align-items:center; justify-content:center; gap:8px;">
-              <span>💧</span><span id="capCost">500</span><span>Droplets</span>
-            </button>
-          </div>
-          <div style="background:#f3f6fb; border-radius:16px; padding:18px; border:1px solid #e5e9f2; display:flex; flex-direction:column; gap:14px;">
-            <div style="font-size:42px; color:#2563eb;">🩸</div>
-            <div style="font-size:22px; font-weight:800; color:#1f2937;">+30 Paint Charges</div>
-            <div style="color:#6b7280; font-weight:600;">Recharge paint charges</div>
-            <div style="display:flex; align-items:center; gap:10px;">
-              <button id="chgDec" class="sb-btn secondary" style="border-radius:50%; width:34px; height:34px;">−</button>
-              <div id="chgQty" style="min-width:40px; text-align:center; font-weight:800;">1</div>
-              <button id="chgInc" class="sb-btn secondary" style="border-radius:50%; width:34px; height:34px;">+</button>
-            </div>
-            <button id="buyCharges" class="sb-btn primary" style="opacity:.9; display:flex; align-items:center; justify-content:center; gap:8px;">
-              <span>💧</span><span id="chgCost">500</span><span>Droplets</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
     
     <!-- Paint button -->
     <button class="paint-button" id="paintButton" style="display:flex; align-items:center; justify-content:center; background:#3498ff; color:#fff; border:none; border-radius:24px; padding:14px 24px; font-size:1.25rem; font-weight:700; box-shadow:0 2px 12px rgba(52,152,255,0.18); cursor:pointer; min-width:120px; gap:8px;">
@@ -750,7 +689,6 @@
             let USER_CHARGES = DEFAULT_CHARGES;
             let lastRefillAt = null; // Date (ms) anchor for regen cadence
             let regenTimer = null;
-            let USER_DROPLETS = 0; // soft currency
 
             function fmtCountdown(seconds) {
               const m = Math.floor(seconds / 60);
@@ -798,8 +736,7 @@
                 await supabase.from('user_paints').update({
                   charges: USER_CHARGES,
                   last_refill_at: new Date(lastRefillAt).toISOString(),
-                  capacity: USER_CAPACITY,
-                  droplets: USER_DROPLETS
+                  capacity: USER_CAPACITY
                 }).eq('user_id', USER_ID);
               }
               updatePaintButtonUI();
@@ -827,20 +764,16 @@
                   capacity: USER_CAPACITY,
                   charges: USER_CHARGES,
                   regen_seconds: RECHARGE_SECONDS,
-                  last_refill_at: new Date(lastRefillAt).toISOString(),
-                  droplets: 0
+                  last_refill_at: new Date(lastRefillAt).toISOString()
                 });
-                USER_DROPLETS = 0;
               } else {
                 USER_CAPACITY = Math.max(1, data.capacity ?? DEFAULT_CAPACITY);
                 USER_CHARGES = Math.max(0, data.charges ?? DEFAULT_CHARGES); // allow > capacity
                 // Use server anchor if present, but only keep it when below capacity
                 const serverAnchor = data.last_refill_at ? new Date(data.last_refill_at).getTime() : null;
                 lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? (serverAnchor || Date.now()) : null;
-                USER_DROPLETS = Math.max(0, data.droplets ?? 0);
               }
               updatePaintButtonUI();
-              updateDropletUI();
               startRegenTimer();
             }
 
@@ -864,7 +797,6 @@
             function renderAuthUI(user) {
               const loginBtn = document.getElementById('loginButton');
               const profilePic = document.getElementById('profilePic');
-              const shopBtn = document.getElementById('shopButton');
               const dropdownPic = document.getElementById('dropdownProfilePic');
               const dropdownName = document.getElementById('dropdownUsername');
               const dropdown = document.getElementById('profileDropdown');
@@ -873,7 +805,6 @@
                 loginBtn.style.display = 'inline-block';
                 profilePic.style.display = 'none';
                 dropdown.style.display = 'none';
-                if (shopBtn) shopBtn.style.display = 'none';
                 return;
               }
               const pic = user.user_metadata?.avatar_url || '';
@@ -882,7 +813,6 @@
               if (pic) { profilePic.src = pic; dropdownPic.src = pic; }
               dropdownName.textContent = name;
               profilePic.style.display = 'block';
-              if (shopBtn) shopBtn.style.display = 'inline-block';
             }
 
             function showAuthPrompt() { const m = document.getElementById('authPromptModal'); if (m) m.style.display = 'flex'; }
@@ -962,8 +892,6 @@
               const logoutBtn = document.getElementById('logoutButton');
               const googleBtn = document.getElementById('googleSignInBtn');
               const authCancelBtn = document.getElementById('authCancelBtn');
-              const shopBtn = document.getElementById('shopButton');
-              const storeCloseBtn = document.getElementById('storeCloseBtn');
 
               loginBtn?.addEventListener('click', () => showAuthPrompt());
               googleBtn?.addEventListener('click', () => loginWithGoogle());
@@ -978,8 +906,6 @@
                 }
               });
               logoutBtn?.addEventListener('click', () => logout());
-              shopBtn?.addEventListener('click', () => openStore());
-              storeCloseBtn?.addEventListener('click', () => closeStore());
             });
 
             // Paint action -> Supabase upsert/delete
@@ -1019,33 +945,31 @@
                   let spendCharge = true;
                   if (cell && USER_ID && cell.owner === USER_ID) {
                     // If color is unchanged, skip any write and do not spend
-                    spendCharge = color !== cell.color;
+                    if (cell.color === color) {
+                      updatePaintButtonUI();
+                      return;
+                    }
+                    // Allow color change without spending a charge
+                    spendCharge = false;
                   }
                   const { error } = await supabase
                     .from('paints')
                     .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
                   if (error) { console.error('Upsert error', error); return; }
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  // Reward 1 droplet per successful paint
-                  if (USER_ID) {
-                    USER_DROPLETS += 1;
-                    updateDropletUI();
-                    // Persist softly (don't await to keep UI snappy)
-                    try { supabase?.from('user_paints').update({ droplets: USER_DROPLETS }).eq('user_id', USER_ID); } catch (e) {}
-                  }
-                  // Spend charge only when necessary
+                  // Spend a charge if signed-in
                   if (USER_ID && spendCharge) {
+                    const prevCharges = USER_CHARGES;
                     USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    if (USER_CHARGES < USER_CAPACITY && !lastRefillAt) lastRefillAt = Date.now();
+                    // Start cooldown only when charges drop below capacity; clear if still >= capacity
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
                     updatePaintButtonUI();
-                    // Persist minimal writes
-                    if (supabase) {
-                      await supabase.from('user_paints').update({
-                        charges: USER_CHARGES,
-                        capacity: USER_CAPACITY,
-                        droplets: USER_DROPLETS
-                      }).eq('user_id', USER_ID);
-                    }
+                    // Persist spend
+                    await supabase.from('user_paints').update({
+                      charges: USER_CHARGES,
+                      last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                      capacity: USER_CAPACITY
+                    }).eq('user_id', USER_ID);
                   }
               }
               updatePaintedCellsDisplay();
@@ -1059,13 +983,11 @@
                 dragRotate: false
             });
 
-            // Expose map safely for early calls like updatePaintedCellsDisplay()
-            window.__map = map;
-
 
 
         const CELL_SIZE_METERS = 20.0375; // 20.0375m × 20.0375m cells (exactly 2,000,000 × 2,000,000 cells worldwide)
         const HOVER_THRESHOLD = 4000; // Show hover when viewport has 4000x4000 cells or fewer
+        
         
         // Painting system variables
         const PAINTING_THRESHOLD = 1000; // Only allow painting when visible cells <= 1000x1000
@@ -1306,10 +1228,7 @@
         }
         
         function updatePaintedCellsDisplay() {
-                const m = window.__map;
-                if (!m) return;
-                const src = m.getSource && m.getSource('painted-cells');
-                if (!src) return;
+                if (!map.getSource('painted-cells')) return;
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
@@ -1317,7 +1236,7 @@
                     cellFeature.properties.color = cell.color;
                     features.push(cellFeature);
                 });
-                src.setData({
+                map.getSource('painted-cells').setData({
                     type: 'FeatureCollection',
                     features: features
                 });
@@ -1600,44 +1519,44 @@
             updateGridVisibility();
             updateGrid();
 
-            // Create zoom hint button (top-center) once
-            (function ensureZoomHint(){
-              if (window.__zoomHintCreated) return; window.__zoomHintCreated = true;
-              const btn = document.createElement('button');
-              btn.id = 'zoomHint';
-              btn.type = 'button';
-              btn.textContent = '  Zoom in to see the pixels';
-              btn.style.position = 'fixed';
-              btn.style.top = '16px';
-              btn.style.left = '50%';
-              btn.style.transform = 'translateX(-50%)';
-              btn.style.display = 'none';
-              btn.style.zIndex = '2000';
-              btn.style.padding = '8px 14px';
-              btn.style.borderRadius = '999px';
-              btn.style.border = '1px solid rgba(0,0,0,0.1)';
-              btn.style.background = 'rgba(255,255,255,0.9)';
-              btn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
-              btn.style.color = '#1f2937';
-              btn.style.fontSize = '14px';
-              btn.style.fontWeight = '600';
-              btn.style.backdropFilter = 'blur(6px)';
-              btn.style.cursor = 'pointer';
-              // Add a small icon via ::before-like span
-              const icon = document.createElement('span');
-              icon.textContent = '↕';
-              icon.style.marginRight = '8px';
-              icon.ariaHidden = 'true';
-              btn.prepend(icon);
-              document.body.appendChild(btn);
-              btn.addEventListener('click', () => {
-                // Zoom to ~4000x4000 visible cells at current center
-                const center = map.getCenter();
-                const pt = map.project(center);
-                const g = screenToGrid(pt.x, pt.y);
-                autoZoomToCell(g.x, g.y, 4000);
-              });
-            })();
+            // Create zoom hint button (top-center)
+            const zoomHint = document.createElement('button');
+            zoomHint.id = 'zoomHint';
+            zoomHint.type = 'button';
+            zoomHint.textContent = 'Zoom in to see the pixels';
+            Object.assign(zoomHint.style, {
+              position: 'fixed', top: '16px', left: '50%', transform: 'translateX(-50%)',
+              zIndex: '2000', padding: '10px 16px', borderRadius: '20px',
+              border: 'none', background: 'rgba(240,245,255,0.95)', color: '#2643A0',
+              fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', cursor: 'pointer',
+              display: 'none'
+            });
+            document.body.appendChild(zoomHint);
+
+            function isPixelsVisible() {
+              const vc = getVisibleGridCells();
+              return vc.x <= 4000 && vc.y <= 4000;
+            }
+
+            function updateZoomHintVisibility() {
+              if (isPixelsVisible()) zoomHint.style.display = 'none';
+              else zoomHint.style.display = 'flex';
+            }
+
+            function zoomToPixelVisibility() {
+              const vc = getVisibleGridCells();
+              const factorX = vc.x / 4000;
+              const factorY = vc.y / 4000;
+              const factor = Math.max(1, factorX, factorY);
+              const deltaZoom = Math.log2(factor);
+              const targetZoom = Math.min(map.getMaxZoom(), map.getZoom() + deltaZoom + 0.01);
+              map.easeTo({ zoom: targetZoom, duration: 700 });
+            }
+
+            zoomHint.addEventListener('click', zoomToPixelVisibility);
+            // Update visibility initially and on movements/zooms
+            updateZoomHintVisibility();
+            map.on('move', updateZoomHintVisibility);
         });
 
         map.on('zoom', () => {
@@ -1645,15 +1564,9 @@
             updateGrid();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
-            const zh = document.getElementById('zoomHint');
-            if (zh) zh.style.display = (vc.x > 4000 || vc.y > 4000) ? 'flex' : 'none';
-        });
-
-        // Also update zoom hint on move
-        map.on('move', () => {
-            const vc = getVisibleGridCells();
-            const zh = document.getElementById('zoomHint');
-            if (zh) zh.style.display = (vc.x > 4000 || vc.y > 4000) ? 'flex' : 'none';
+            if (vc.x > 4000 || vc.y > 4000) {
+                // Silenced periodic zoom-out notification
+            }
         });
 
         map.on('mousemove', handleMouseMove);
@@ -1781,17 +1694,6 @@
         });
         
         // Initialize palette functionality
-        function openStore() {
-          const m = document.getElementById('storeModal'); if (!m) return;
-          m.style.display = 'flex'; // trigger flex centering
-          document.body.style.overflow = 'hidden'; // prevent background scroll
-          document.getElementById('capQty').textContent = '1';
-          document.getElementById('chgQty').textContent = '1';
-          document.getElementById('capCost').textContent = String(PACK_COST);
-          document.getElementById('chgCost').textContent = String(PACK_COST);
-          updateDropletUI();
-        }
-        function closeStore() { const m = document.getElementById('storeModal'); if (m) m.style.display = 'none'; document.body.style.overflow = ''; }
         function initializePalette() {
             const colorRow1 = document.getElementById('colorRow1');
             const colorRow2 = document.getElementById('colorRow2');
