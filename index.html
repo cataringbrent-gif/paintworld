@@ -990,7 +990,7 @@
         
         
         // Painting system variables
-        const PAINTING_THRESHOLD = HOVER_THRESHOLD; // Only allow painting when visible cells <= painted-cells visibility threshold (4000x4000)
+        const PAINTING_THRESHOLD = 1000; // Only allow painting when visible cells <= 1000x1000
         const MAX_CELLS = 10000; // Maximum number of cells that can be painted
         let currentHoveredCell = null;
         let gridVisible = false;
@@ -1073,13 +1073,14 @@
             const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
             const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
             
-            // Use width/height based calculation to avoid boundary rounding errors
-            const widthMeters = Math.max(0, neMercator.x - swMercator.x);
-            const heightMeters = Math.max(0, neMercator.y - swMercator.y);
-            // Floor with a tiny epsilon to prevent 4000.0000001 -> 4001 due to FP error
-            const EPS = 1e-6;
-            const cellsX = Math.max(1, Math.floor(widthMeters / CELL_SIZE_METERS + EPS));
-            const cellsY = Math.max(1, Math.floor(heightMeters / CELL_SIZE_METERS + EPS));
+            // Convert to normalized grid coordinates (0 to 1,999,999)
+            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            
+            const cellsX = endGridX - startGridX;
+            const cellsY = endGridY - startGridY;
             
             return { x: cellsX, y: cellsY };
         }
@@ -1177,15 +1178,7 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            const shouldShowPaints = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            // Debug: log the computed counts and decisions
-            if (typeof console !== 'undefined' && console.debug) {
-                console.debug('[grid-visibility] visibleCells', visibleCells, {
-                    HOVER_THRESHOLD,
-                    shouldShowGrid,
-                    shouldShowPaints
-                });
-            }
+            const shouldShowPaints = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD; // show paints only when <= 4000 x 4000
             
             if (shouldShowGrid !== gridVisible) {
                 gridVisible = shouldShowGrid;
@@ -1196,7 +1189,7 @@
                         map.setLayoutProperty('grid-hover', 'visibility', 'visible');
                     }
                 } else {
-                    // Hide hover layer and clear hovered cell
+                    // Hide hover layer
                     if (map.getLayer('grid-hover')) {
                         map.setLayoutProperty('grid-hover', 'visibility', 'none');
                     }
@@ -1211,20 +1204,12 @@
                 }
             }
 
-            // Toggle painted cells visibility per requirement (<= 4000x4000 visible cells)
+            // Toggle painted cells visibility with same threshold
             if (map.getLayer('painted-cells')) {
-                const targetVisibility = shouldShowPaints ? 'visible' : 'none';
-                const prev = map.getLayoutProperty('painted-cells', 'visibility');
-                map.setLayoutProperty('painted-cells', 'visibility', targetVisibility);
-                if (targetVisibility === 'visible') {
-                    // Always refresh features when visible to avoid stale/empty rendering
-                    updatePaintedCellsDisplay();
-                }
-                if (typeof console !== 'undefined' && console.debug && prev !== targetVisibility) {
-                    console.debug('[painted-cells] toggled visibility', { from: prev, to: targetVisibility });
-                }
+                map.setLayoutProperty('painted-cells', 'visibility', shouldShowPaints ? 'visible' : 'none');
             }
         }
+
 
         // Update grid data
         function updateGrid() {
@@ -1354,7 +1339,7 @@
                         features: [hoverCell]
                     });
                     
-                    // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= painted-cells visibility threshold)
+                    // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
                     if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
                         const vc = getVisibleGridCells();
                         if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
@@ -1362,7 +1347,7 @@
                         }
                     }
                     
-                    // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= painted-cells visibility threshold)
+                    // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
                     if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
                         const vc = getVisibleGridCells();
                         if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
@@ -1535,8 +1520,6 @@
                     visibility: 'visible'
                 }
             });
-            // Ensure painted cells render above other layers
-            try { map.moveLayer('painted-cells'); } catch (e) { /* ignore if already top */ }
 
             // Render any preloaded paints now that the source exists
             updatePaintedCellsDisplay();
@@ -1546,23 +1529,19 @@
             updateGrid();
         });
 
-        const handleViewportChange = () => {
+        map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
-            if (vc.x > HOVER_THRESHOLD || vc.y > HOVER_THRESHOLD) {
+            if (vc.x > 4000 || vc.y > 4000) {
                 const now = Date.now();
                 if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
                     showNotification('Zoomed out too far to paint. Zoom in.');
                     lastZoomNoticeTime = now;
                 }
             }
-        };
-
-        map.on('zoom', handleViewportChange);
-        map.on('move', handleViewportChange);
-        map.on('resize', handleViewportChange);
+        });
 
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
