@@ -1178,6 +1178,7 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
+            const shouldShowPaints = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
             if (shouldShowGrid !== gridVisible) {
                 gridVisible = shouldShowGrid;
@@ -1202,7 +1203,17 @@
                     }
                 }
             }
+
+            // Ensure painted cells layer respects 4000x4000 visibility rule
+            if (map.getLayer('painted-cells')) {
+                const current = map.getLayoutProperty('painted-cells', 'visibility');
+                const desired = shouldShowPaints ? 'visible' : 'none';
+                if (current !== desired) {
+                    map.setLayoutProperty('painted-cells', 'visibility', desired);
+                }
+            }
         }
+
 
         // Update grid data
         function updateGrid() {
