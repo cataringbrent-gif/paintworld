@@ -1213,7 +1213,18 @@
 
             // Toggle painted cells visibility per requirement (<= 4000x4000 visible cells)
             if (map.getLayer('painted-cells')) {
-                map.setLayoutProperty('painted-cells', 'visibility', shouldShowPaints ? 'visible' : 'none');
+                const targetVisibility = shouldShowPaints ? 'visible' : 'none';
+                const currentVis = map.getLayoutProperty('painted-cells', 'visibility');
+                if (currentVis !== targetVisibility) {
+                    map.setLayoutProperty('painted-cells', 'visibility', targetVisibility);
+                    if (targetVisibility === 'visible') {
+                        // Force refresh to ensure features are rendered when layer becomes visible
+                        updatePaintedCellsDisplay();
+                    }
+                    if (typeof console !== 'undefined' && console.debug) {
+                        console.debug('[painted-cells] toggled visibility', { from: currentVis, to: targetVisibility });
+                    }
+                }
             }
         }
 
@@ -1526,6 +1537,8 @@
                     visibility: 'visible'
                 }
             });
+            // Ensure painted cells render above other layers
+            try { map.moveLayer('painted-cells'); } catch (e) { /* ignore if already top */ }
 
             // Render any preloaded paints now that the source exists
             updatePaintedCellsDisplay();
