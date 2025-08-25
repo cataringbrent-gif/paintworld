@@ -1073,14 +1073,13 @@
             const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
             const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
             
-            // Convert to normalized grid coordinates (0 to 1,999,999)
-            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
-            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
-            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
-            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
-            
-            const cellsX = endGridX - startGridX;
-            const cellsY = endGridY - startGridY;
+            // Use width/height based calculation to avoid boundary rounding errors
+            const widthMeters = Math.max(0, neMercator.x - swMercator.x);
+            const heightMeters = Math.max(0, neMercator.y - swMercator.y);
+            // Floor with a tiny epsilon to prevent 4000.0000001 -> 4001 due to FP error
+            const EPS = 1e-6;
+            const cellsX = Math.max(1, Math.floor(widthMeters / CELL_SIZE_METERS + EPS));
+            const cellsY = Math.max(1, Math.floor(heightMeters / CELL_SIZE_METERS + EPS));
             
             return { x: cellsX, y: cellsY };
         }
@@ -1178,7 +1177,15 @@
         function updateGridVisibility() {
             const visibleCells = getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            const shouldShowPaints = visibleCells.x <= 4000 && visibleCells.y <= 4000;
+            const shouldShowPaints = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
+            // Debug: log the computed counts and decisions
+            if (typeof console !== 'undefined' && console.debug) {
+                console.debug('[grid-visibility] visibleCells', visibleCells, {
+                    HOVER_THRESHOLD,
+                    shouldShowGrid,
+                    shouldShowPaints
+                });
+            }
             
             if (shouldShowGrid !== gridVisible) {
                 gridVisible = shouldShowGrid;
@@ -1189,7 +1196,7 @@
                         map.setLayoutProperty('grid-hover', 'visibility', 'visible');
                     }
                 } else {
-                    // Hide hover layer
+                    // Hide hover layer and clear hovered cell
                     if (map.getLayer('grid-hover')) {
                         map.setLayoutProperty('grid-hover', 'visibility', 'none');
                     }
@@ -1202,6 +1209,11 @@
                         currentHoveredCell = null;
                     }
                 }
+            }
+
+            // Toggle painted cells visibility per requirement (<= 4000x4000 visible cells)
+            if (map.getLayer('painted-cells')) {
+                map.setLayoutProperty('painted-cells', 'visibility', shouldShowPaints ? 'visible' : 'none');
             }
         }
 
@@ -1523,19 +1535,23 @@
             updateGrid();
         });
 
-        map.on('zoom', () => {
+        const handleViewportChange = () => {
             updateGridVisibility();
             updateGrid();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
-            if (vc.x > 4000 || vc.y > 4000) {
+            if (vc.x > HOVER_THRESHOLD || vc.y > HOVER_THRESHOLD) {
                 const now = Date.now();
                 if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
                     showNotification('Zoomed out too far to paint. Zoom in.');
                     lastZoomNoticeTime = now;
                 }
             }
-        });
+        };
+
+        map.on('zoom', handleViewportChange);
+        map.on('move', handleViewportChange);
+        map.on('resize', handleViewportChange);
 
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
