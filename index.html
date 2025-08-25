@@ -525,6 +525,10 @@
         .auth-card { background: #fff; border-radius: 16px; padding: 20px; width: 92%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,0.18); display: flex; flex-direction: column; gap: 12px; }
         .google-btn { padding: 12px 14px; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; background: #fff; color: #333; border: 1px solid #e3e6eb; display: flex; align-items: center; gap: 10px; justify-content: center; }
 
+        /* Store modal explicit centering */
+        #storeModal { display:none; position: fixed; inset:0; z-index:3600; background: rgba(0,0,0,0.35); align-items:center; justify-content:center; }
+        #storeModal .sb-modal-card { margin:auto; }
+
     </style>
 </head>
 <body>
@@ -1055,6 +1059,9 @@
                 dragRotate: false
             });
 
+            // Expose map safely for early calls like updatePaintedCellsDisplay()
+            window.__map = map;
+
 
 
         const CELL_SIZE_METERS = 20.0375; // 20.0375m × 20.0375m cells (exactly 2,000,000 × 2,000,000 cells worldwide)
@@ -1299,7 +1306,10 @@
         }
         
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
+                const m = window.__map;
+                if (!m) return;
+                const src = m.getSource && m.getSource('painted-cells');
+                if (!src) return;
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
@@ -1307,7 +1317,7 @@
                     cellFeature.properties.color = cell.color;
                     features.push(cellFeature);
                 });
-                map.getSource('painted-cells').setData({
+                src.setData({
                     type: 'FeatureCollection',
                     features: features
                 });
@@ -1771,6 +1781,17 @@
         });
         
         // Initialize palette functionality
+        function openStore() {
+          const m = document.getElementById('storeModal'); if (!m) return;
+          m.style.display = 'flex'; // trigger flex centering
+          document.body.style.overflow = 'hidden'; // prevent background scroll
+          document.getElementById('capQty').textContent = '1';
+          document.getElementById('chgQty').textContent = '1';
+          document.getElementById('capCost').textContent = String(PACK_COST);
+          document.getElementById('chgCost').textContent = String(PACK_COST);
+          updateDropletUI();
+        }
+        function closeStore() { const m = document.getElementById('storeModal'); if (m) m.style.display = 'none'; document.body.style.overflow = ''; }
         function initializePalette() {
             const colorRow1 = document.getElementById('colorRow1');
             const colorRow2 = document.getElementById('colorRow2');
