@@ -497,21 +497,27 @@
         }
         #shopButton {
             position: absolute;
-            top: 52px; /* just below the 40px avatar + margin */
-            right: 0;
-            padding: 6px 10px;
-            border-radius: 999px;
-            border: 1px solid rgba(0,0,0,0.1);
-            background: rgba(255,255,255,0.95);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-            color: #1f2937;
-            font-size: 12px;
-            font-weight: 600;
+            top: 48px; /* Positioned below the avatar */
+            right: 2px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1px solid rgba(0,0,0,0.08);
+            background: rgba(245, 245, 245, 0.9);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            color: #4B5563; /* Icon color */
             cursor: pointer;
             display: none; /* shown when logged in */
             z-index: 1500;
-            backdrop-filter: blur(6px);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            transition: all 0.2s ease;
         }
+        #shopButton:hover { background: rgba(235, 235, 235, 0.95); }
+        #shopButton svg { width: 18px; height: 18px; }
         #profileDropdown {
             position: absolute;
             top: 56px;
@@ -628,7 +634,13 @@
     <div id="userBox" style="display:flex;">
         <button id="loginButton" title="Log in">Log In</button>
         <img id="profilePic" alt="Profile"/>
-        <button id="shopButton" title="Shop">Shop</button>
+        <button id="shopButton" title="Shop">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="21" r="1"></circle>
+            <circle cx="20" cy="21" r="1"></circle>
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+          </svg>
+        </button>
         <div id="profileDropdown">
             <div id="dropdownHeader">
                 <img id="dropdownProfilePic" alt="Profile"/>
@@ -1005,14 +1017,28 @@
                 }
               });
               logoutBtn?.addEventListener('click', () => logout());
-              shopBtn?.addEventListener('click', () => {
-                updatePigmentBalanceUI();
-                if (storeModal) storeModal.style.display = 'flex';
-              });
-              storeCloseBtn?.addEventListener('click', () => { if (storeModal) storeModal.style.display = 'none'; });
-              storeModal?.addEventListener('mousedown', (e) => {
-                if (e.target === storeModal) storeModal.style.display = 'none';
-              });
+
+              // Store Modal Listeners
+              if (shopBtn) {
+                  shopBtn.addEventListener('click', () => {
+                      if (storeModal) {
+                          updatePigmentBalanceUI();
+                          storeModal.style.display = 'flex';
+                      }
+                  });
+              }
+              if (storeCloseBtn) {
+                  storeCloseBtn.addEventListener('click', () => {
+                      if (storeModal) storeModal.style.display = 'none';
+                  });
+              }
+              if (storeModal) {
+                  storeModal.addEventListener('mousedown', (e) => {
+                      if (e.target === storeModal) {
+                          storeModal.style.display = 'none';
+                      }
+                  });
+              }
 
               // Purchase handlers (real balance updates)
               async function persistPaints(partial) {
