@@ -510,7 +510,6 @@
             display: none; /* shown when logged in */
             z-index: 1500;
             backdrop-filter: blur(8px);
-            display: flex;
             align-items: center;
             justify-content: center;
             padding: 0;
@@ -919,7 +918,7 @@
               if (pic) { profilePic.src = pic; dropdownPic.src = pic; }
               dropdownName.textContent = name;
               profilePic.style.display = 'block';
-              if (shopBtn) shopBtn.style.display = 'inline-block';
+              if (shopBtn) shopBtn.style.display = 'flex';
             }
 
             function showAuthPrompt() { const m = document.getElementById('authPromptModal'); if (m) m.style.display = 'flex'; }
