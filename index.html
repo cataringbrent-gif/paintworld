@@ -990,7 +990,7 @@
         
         
         // Painting system variables
-        const PAINTING_THRESHOLD = 1000; // Only allow painting when visible cells <= 1000x1000
+        const PAINTING_THRESHOLD = HOVER_THRESHOLD; // Only allow painting when visible cells <= painted-cells visibility threshold (4000x4000)
         const MAX_CELLS = 10000; // Maximum number of cells that can be painted
         let currentHoveredCell = null;
         let gridVisible = false;
@@ -1345,7 +1345,7 @@
                         features: [hoverCell]
                     });
                     
-                    // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
+                    // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= painted-cells visibility threshold)
                     if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
                         const vc = getVisibleGridCells();
                         if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
@@ -1353,7 +1353,7 @@
                         }
                     }
                     
-                    // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
+                    // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= painted-cells visibility threshold)
                     if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
                         const vc = getVisibleGridCells();
                         if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
