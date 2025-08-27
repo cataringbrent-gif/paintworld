@@ -650,7 +650,7 @@
       <div class="store-card">
         <div class="store-header">
           <div class="store-title">🛍️ <span>Store</span></div>
-          <div class="store-balance"><span>🎨</span><span id="storePigmentsBalance">0</span></div>
+          <div class="store-balance"><span class="ico">💧</span><span id="storePigmentsBalance">0</span><span>&nbsp;Droplets</span></div>
           <button id="storeClose" class="store-close">×</button>
         </div>
         <div class="section-head">
@@ -660,14 +660,14 @@
         <div class="store-grid">
           <div class="store-item" id="itemCapacity">
             <div class="icon-badge">⬆️</div>
-            <h4>+5 Max. Capacity</h4>
+            <h4>+5 Max. Charges</h4>
             <p>Increase your maximum paint charges capacity</p>
             <div class="qty">
               <button id="capMinus">−</button>
               <input id="capQty" type="number" value="1" min="1" />
               <button id="capPlus">+</button>
             </div>
-            <div class="price-row"><span class="ico">🎨</span><strong><span id="capCost">500</span></strong> <span>Pigments</span></div>
+            <div class="price-row"><span class="ico">💧</span><strong><span id="capCost">500</span></strong> <span>Droplets</span></div>
             <button id="buyCapacity" class="buy-btn" disabled>Purchase</button>
           </div>
           <div class="store-item" id="itemCharges">
@@ -679,32 +679,27 @@
               <input id="chgQty" type="number" value="1" min="1" />
               <button id="chgPlus">+</button>
             </div>
-            <div class="price-row"><span class="ico">🎨</span><strong><span id="chgCost">500</span></strong> <span>Pigments</span></div>
+            <div class="price-row"><span class="ico">💧</span><strong><span id="chgCost">500</span></strong> <span>Droplets</span></div>
             <button id="buyCharges" class="buy-btn" disabled>Purchase</button>
           </div>
           <div class="store-item" id="itemBorders">
             <div class="icon-badge">🖼️</div>
             <h4>Borders</h4>
-            <p>Create a custom-sized border.</p>
+            <p>Protect your art from griefers</p>
             <div class="borders-form">
               <div class="dim-inputs">
                 <label>Width (px)
-                  <input id="borderWidth" type="number" value="100" min="1" />
+                  <input id="borderWidth" type="number" value="10" min="1" />
                 </label>
                 <span style="align-self:end;opacity:.7;">×</span>
                 <label>Height (px)
-                  <input id="borderHeight" type="number" value="100" min="1" />
+                  <input id="borderHeight" type="number" value="10" min="1" />
                 </label>
               </div>
               <div class="calc">
-                <div class="row"><span>Total Pixels:</span> <strong id="borderPixels">10,000</strong></div>
-                <div class="row"><span>Price:</span> <strong><span id="borderPricePigments">50,000</span> Pigments</strong> <span style="opacity:.6;">•</span> <strong id="borderPriceUsd">$10.00</strong></div>
+                <div class="row"><span>Price:</span> <strong><span id="borderPricePigments">800</span> Droplets</strong> <span style="opacity:.6;">•</span> <strong id="borderPriceUsd">$15.00</strong></div>
               </div>
-              <div class="info">Unused pixels are refunded into Pigments 🎨 at shop rates.</div>
-              <div class="actions">
-                <button id="buyBorderPigments" class="buy-btn" disabled>Pigments 🎨</button>
-                <button id="buyBorderMoney" class="buy-btn secondary">$</button>
-              </div>
+              <button id="buyBorderPurchase" class="buy-btn" disabled>Purchase</button>
             </div>
           </div>
         </div>
@@ -981,30 +976,16 @@
             }
 
             function recalcBordersPrice() {
-              const borderW = document.getElementById('borderWidth');
-              const borderH = document.getElementById('borderHeight');
-              const borderPixels = document.getElementById('borderPixels');
               const borderPriceUsd = document.getElementById('borderPriceUsd');
               const borderPricePigments = document.getElementById('borderPricePigments');
-              const buyBorderPigments = document.getElementById('buyBorderPigments');
-              if (!borderW || !borderH || !borderPixels || !borderPriceUsd) return;
-              const w = sanitizeDim(borderW.value);
-              const h = sanitizeDim(borderH.value);
-              if (String(w) !== borderW.value) borderW.value = String(w);
-              if (String(h) !== borderH.value) borderH.value = String(h);
-              const pixels = w * h;
-              const dollars = pixels * 0.001; // width × height × $0.001
-              borderPixels.textContent = pixels.toLocaleString();
-              borderPriceUsd.textContent = `$${dollars.toFixed(2)}`;
-              const pigmentsCost = Math.ceil(dollars * PIGMENTS_PER_DOLLAR);
-              if (borderPricePigments) borderPricePigments.textContent = pigmentsCost.toLocaleString();
-              if (buyBorderPigments) {
-                const ok = USER_PIGMENTS >= pigmentsCost && !!USER_ID;
-                buyBorderPigments.disabled = !ok;
-                buyBorderPigments.title = `Costs ${pigmentsCost.toLocaleString()} pigments`;
-                buyBorderPigments.classList.toggle('enabled', ok);
+              const buyBorderPurchase = document.getElementById('buyBorderPurchase');
+              if (borderPriceUsd) borderPriceUsd.textContent = '$15.00';
+              if (borderPricePigments) borderPricePigments.textContent = '800';
+              if (buyBorderPurchase) {
+                buyBorderPurchase.disabled = false;
+                buyBorderPurchase.classList.add('enabled');
               }
-              return { pixels, dollars, pigmentsCost };
+              return { dollars: 15, pigmentsCost: 800 };
             }
 
             async function persistPigments() {
@@ -1211,8 +1192,7 @@
               // Borders elements
               const borderW = document.getElementById('borderWidth');
               const borderH = document.getElementById('borderHeight');
-              const buyBorderMoney = document.getElementById('buyBorderMoney');
-              const buyBorderPigments = document.getElementById('buyBorderPigments');
+              const buyBorderPurchase = document.getElementById('buyBorderPurchase');
 
               borderW?.addEventListener('input', recalcBordersPrice);
               borderH?.addEventListener('input', recalcBordersPrice);
@@ -1241,21 +1221,9 @@
                 updatePigmentsUI();
               });
 
-              buyBorderPigments?.addEventListener('click', async () => {
-                const res = recalcBordersPrice();
-                if (!res) return;
-                const pigmentsCost = res.pigmentsCost ?? Math.ceil(res.dollars * PIGMENTS_PER_DOLLAR);
-                if (!USER_ID) { showNotification('Please sign in first'); return; }
-                if (USER_PIGMENTS < pigmentsCost) return;
-                USER_PIGMENTS -= pigmentsCost;
-                await persistPigments();
-                updatePigmentsUI();
-                showNotification('Border purchased with pigments');
-              });
-
-              buyBorderMoney?.addEventListener('click', () => {
-                // Placeholder until Stripe integration
-                showNotification('Payments not connected yet.');
+              buyBorderPurchase?.addEventListener('click', () => {
+                // Screenshot version: single Purchase button. Placeholder action for now.
+                showNotification('Purchase');
               });
             });
 
