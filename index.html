@@ -662,6 +662,18 @@
             </div>
             <button id="buyCharges" class="buy-btn" disabled>🎨 <span id="chgCost">500</span> Pigments</button>
           </div>
+          <div class="store-item" id="itemBorder">
+            <div class="icon">🖼️</div>
+            <h4>Border</h4>
+            <p>Your private studio. Enter size then place on the map.</p>
+            <div class="qty" style="gap:6px;">
+              <input id="borderWidth" type="number" min="1" placeholder="Width" style="width:90px;"/>
+              <span>×</span>
+              <input id="borderHeight" type="number" min="1" placeholder="Height" style="width:90px;"/>
+            </div>
+            <div style="margin:8px 0;color:#64748b;font-weight:600;">Cost: $<span id="borderDollarCost">0.00</span> (@ $0.001/pixel)</div>
+            <button id="createBorder" class="buy-btn" disabled>Create Border</button>
+          </div>
         </div>
       </div>
     </div>
@@ -760,6 +772,273 @@
                 clean.searchParams.delete('supabaseKey');
                 window.history.replaceState({}, '', clean.toString());
               }
+
+            // ===== Border System (MVP) =====
+            let ACTIVE_BORDER = null; // { user_id, x, y, width, height, created_at }
+            let borderPlacementPending = false;
+
+            function dollarsToPigmentsGreedy(dollars) {
+              // Convert dollars to pigments using bundles greedily
+              const bundles = [
+                { d: 100, p: 625000 },
+                { d: 75, p: 450000 },
+                { d: 50, p: 287500 },
+                { d: 30, p: 165000 },
+                { d: 15, p: 78750 },
+                { d: 5, p: 25000 },
+              ];
+              let remaining = Math.floor(dollars + 1e-6); // use whole dollars for bundles
+              let pigments = 0;
+              for (const b of bundles) {
+                while (remaining >= b.d) { remaining -= b.d; pigments += b.p; }
+              }
+              // Ignore leftover < $5 for now (no bundle)
+              return pigments;
+            }
+
+            function rectToPolygon(x, y, w, h) {
+              // Convert grid rect to polygon in lon/lat (EPSG:3857 back project)
+              function fromGrid(gx, gy) {
+                const mx = gx * CELL_SIZE_METERS - 20037508.34;
+                const my = gy * CELL_SIZE_METERS - 20037508.34;
+                // Inverse WebMercator
+                const lon = (mx / 20037508.34) * 180;
+                const lat = (my / 20037508.34) * 180;
+                const y2 = (Math.PI * lat) / 180;
+                const lat2 = (180 / Math.PI) * (2 * Math.atan(Math.exp(y2)) - Math.PI / 2);
+                return [lon, lat2];
+              }
+              const p1 = fromGrid(x, y);
+              const p2 = fromGrid(x + w, y);
+              const p3 = fromGrid(x + w, y + h);
+              const p4 = fromGrid(x, y + h);
+              return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[p1, p2, p3, p4, p1]] } };
+            }
+
+            function ensureBorderLayers() {
+              if (!map.getSource('active-border')) {
+                map.addSource('active-border', { type: 'geojson', data: { type:'FeatureCollection', features: [] } });
+              }
+              if (!map.getLayer('active-border-fill')) {
+                map.addLayer({ id:'active-border-fill', type:'fill', source:'active-border', paint:{ 'fill-color':'#0ea5e9', 'fill-opacity': 0.22 } });
+              }
+              if (!map.getLayer('active-border-line')) {
+                map.addLayer({ id:'active-border-line', type:'line', source:'active-border', paint:{ 'line-color':'#0ea5e9', 'line-width': 2 } });
+              }
+            }
+
+            function updateActiveBorderDisplay() {
+              ensureBorderLayers();
+              const src = map.getSource('active-border');
+              if (!src) return;
+              if (!ACTIVE_BORDER) {
+                src.setData({ type:'FeatureCollection', features: [] });
+                document.getElementById('confirmBorderBtn')?.remove();
+                return;
+              }
+              const poly = rectToPolygon(ACTIVE_BORDER.x, ACTIVE_BORDER.y, ACTIVE_BORDER.width, ACTIVE_BORDER.height);
+              src.setData({ type:'FeatureCollection', features: [poly] });
+              // Owner sees less obstruction than others
+              const ownerView = USER_ID && ACTIVE_BORDER.user_id === USER_ID;
+              if (map.getLayer('active-border-fill')) {
+                map.setPaintProperty('active-border-fill', 'fill-opacity', ownerView ? 0.08 : 0.22);
+              }
+              ensureConfirmBorderButton();
+            }
+
+            function ensureConfirmBorderButton() {
+              if (document.getElementById('confirmBorderBtn')) return;
+              const btn = document.createElement('button');
+              btn.id = 'confirmBorderBtn';
+              btn.textContent = 'Confirm Border';
+              Object.assign(btn.style, { position:'absolute', top:'70px', right:'16px', zIndex:1000, padding:'10px 14px', borderRadius:'8px', background:'#0ea5e9', color:'#fff', border:'none', boxShadow:'0 6px 20px rgba(0,0,0,0.25)', cursor:'pointer' });
+              btn.addEventListener('click', () => confirmBorder());
+              document.body.appendChild(btn);
+            }
+
+            function startBorderPlacement() {
+              if (!USER_ID) { showNotification('Sign in to create a border'); return; }
+              if (ACTIVE_BORDER) { showNotification('You already have an active border'); return; }
+              const bw = parseInt(document.getElementById('borderWidth')?.value || '0', 10) || 0;
+              const bh = parseInt(document.getElementById('borderHeight')?.value || '0', 10) || 0;
+              if (!(bw > 0 && bh > 0)) return;
+              borderPlacementPending = true;
+              showNotification?.('Click on the map to place your border');
+            }
+
+            function lngLatToGrid(lon, lat) {
+              // Project lon/lat to WebMercator meters and to grid
+              const x = (lon / 180) * 20037508.34;
+              const y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+              const my = (y * 20037508.34) / 180;
+              const gx = Math.floor((x + 20037508.34) / CELL_SIZE_METERS);
+              const gy = Math.floor((my + 20037508.34) / CELL_SIZE_METERS);
+              return { gx, gy };
+            }
+
+            function areaOverlapsPaint(x, y, w, h) {
+              // Quick overlap check using paintedCells map key lookup
+              for (let ix = x; ix < x + w; ix++) {
+                for (let iy = y; iy < y + h; iy++) {
+                  if (paintedCells.has(`${ix},${iy}`)) return true;
+                }
+              }
+              return false;
+            }
+
+            map.on('click', (e) => {
+              if (!borderPlacementPending) return;
+              const { gx, gy } = lngLatToGrid(e.lngLat.lng, e.lngLat.lat);
+              const bw = parseInt(document.getElementById('borderWidth')?.value || '0', 10) || 0;
+              const bh = parseInt(document.getElementById('borderHeight')?.value || '0', 10) || 0;
+              if (areaOverlapsPaint(gx, gy, bw, bh)) { showNotification('Border must be placed on free area'); return; }
+              ACTIVE_BORDER = { user_id: USER_ID, x: gx, y: gy, width: bw, height: bh, created_at: Date.now() };
+              borderPlacementPending = false;
+              updateActiveBorderDisplay();
+            });
+
+            async function confirmBorder() {
+              if (!ACTIVE_BORDER) return;
+              // Compute painted pixels by owner within border
+              let paintedByOwner = 0;
+              const newlyOwned = [];
+              for (let ix = ACTIVE_BORDER.x; ix < ACTIVE_BORDER.x + ACTIVE_BORDER.width; ix++) {
+                for (let iy = ACTIVE_BORDER.y; iy < ACTIVE_BORDER.y + ACTIVE_BORDER.height; iy++) {
+                  const cell = paintedCells.get(`${ix},${iy}`);
+                  if (cell && cell.owner === USER_ID) { paintedByOwner++; newlyOwned.push({ x: ix, y: iy, color: cell.color }); }
+                }
+              }
+              const area = ACTIVE_BORDER.width * ACTIVE_BORDER.height;
+              const unused = Math.max(0, area - paintedByOwner);
+              const refundDollars = unused * BORDER_PRICE_PER_PIXEL;
+              const pigments = dollarsToPigmentsGreedy(refundDollars);
+              if (pigments > 0) {
+                USER_PIGMENTS += pigments;
+                await persistPigments();
+                updatePigmentsUI();
+              }
+              // Track ownership locally for anti-grief
+              addOwnedCells(newlyOwned);
+              // TODO: persist ACTIVE_BORDER as confirmed and ownership if needed (server-side)
+              ACTIVE_BORDER = null;
+              updateActiveBorderDisplay();
+              showNotification?.('Artwork confirmed. Refund applied.');
+            }
+
+            // Owned pixel glow on hover (simple scaffold)
+            let hoverHighlight = null;
+            function ensureHoverLayer() {
+              if (!map.getSource('owned-hover')) {
+                map.addSource('owned-hover', { type:'geojson', data: { type:'FeatureCollection', features: [] } });
+                map.addLayer({ id:'owned-hover', type:'line', source:'owned-hover', paint:{ 'line-color':'#f59e0b', 'line-width': 2, 'line-blur': 1.5 } });
+              }
+            }
+            map.on('mousemove', (e) => {
+              ensureHoverLayer();
+              const { gx, gy } = lngLatToGrid(e.lngLat.lng, e.lngLat.lat);
+              const cell = paintedCells.get(`${gx},${gy}`);
+              const src = map.getSource('owned-hover');
+              if (!src) return;
+              if (cell && cell.owner === USER_ID) {
+                hoverHighlight = rectToPolygon(gx, gy, 1, 1);
+                src.setData({ type:'FeatureCollection', features:[hoverHighlight] });
+              } else {
+                src.setData({ type:'FeatureCollection', features: [] });
+              }
+            });
+
+            // ===== Anti-Grief: ownership tracking and Clean Grief =====
+            const OWNED_CELLS = new Map(); // key -> color
+            const GRIEF_EVENTS = []; // { key, prevColor, at }
+            function ownedKey(x,y){ return `${x},${y}`; }
+            function loadOwnedFromStorage(){
+              if (!USER_ID) return;
+              try {
+                const raw = localStorage.getItem(`owned:${USER_ID}`);
+                if (raw) {
+                  const obj = JSON.parse(raw);
+                  OWNED_CELLS.clear();
+                  for (const k in obj) OWNED_CELLS.set(k, obj[k]);
+                }
+              } catch {}
+            }
+            function saveOwnedToStorage(){
+              if (!USER_ID) return;
+              const obj = {}; OWNED_CELLS.forEach((v,k)=>obj[k]=v);
+              localStorage.setItem(`owned:${USER_ID}`, JSON.stringify(obj));
+            }
+            function addOwnedCells(items){
+              if (!items?.length) return;
+              for (const it of items) OWNED_CELLS.set(ownedKey(it.x,it.y), it.color);
+              saveOwnedToStorage();
+              ensureCleanGriefButton();
+            }
+
+            function ensureCleanGriefButton(){
+              if (document.getElementById('cleanGriefBtn')) return;
+              const btn = document.createElement('button');
+              btn.id = 'cleanGriefBtn';
+              btn.textContent = 'Clean Grief';
+              Object.assign(btn.style, { position:'absolute', top:'120px', right:'16px', zIndex:1000, padding:'10px 14px', borderRadius:'8px', background:'#10b981', color:'#fff', border:'none', boxShadow:'0 6px 20px rgba(0,0,0,0.25)', cursor:'pointer' });
+              btn.addEventListener('click', () => cleanGriefNow());
+              document.body.appendChild(btn);
+            }
+
+            function getWindowStart(){
+              const v = localStorage.getItem(`griefWindowStart:${USER_ID}`);
+              return v ? parseInt(v,10) : Date.now();
+            }
+            function setWindowStart(ts){ localStorage.setItem(`griefWindowStart:${USER_ID}`, String(ts)); }
+
+            async function cleanGriefNow(){
+              if (!USER_ID) return;
+              const windowStart = getWindowStart();
+              const now = Date.now();
+              const toRestore = GRIEF_EVENTS.filter(ev => ev.at >= windowStart && ev.at <= now);
+              if (toRestore.length === 0) { showNotification?.('Nothing to clean in this window.'); setWindowStart(now); return; }
+              const payload = [];
+              for (const ev of toRestore) {
+                const [xStr, yStr] = ev.key.split(',');
+                const x = parseInt(xStr,10), y = parseInt(yStr,10);
+                payload.push({ x, y, color: ev.prevColor, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+              }
+              if (payload.length) {
+                const { error } = await supabase.from('paints').upsert(payload, { onConflict: 'x,y' });
+                if (error) console.error('Clean grief upsert error', error);
+              }
+              // Clear handled events for this window
+              const remaining = GRIEF_EVENTS.filter(ev => !(ev.at >= windowStart && ev.at <= now));
+              GRIEF_EVENTS.length = 0; GRIEF_EVENTS.push(...remaining);
+              setWindowStart(now);
+              showNotification?.('Cleaned overwrites in the current window.');
+              await pollUpdates();
+            }
+
+            // Detect overwrites during polling and log them
+            let originalMergeRow = (typeof mergeRow === 'function') ? mergeRow : function(row){
+              // Fallback merge: mirror row into paintedCells
+              const key = `${row.x},${row.y}`;
+              if (row.color === null) paintedCells.delete(key);
+              else paintedCells.set(key, { color: row.color, owner: row.owner, owner_name: row.owner_name, owner_avatar: row.owner_avatar });
+            };
+            mergeRow = function(row){
+              const key = `${row.x},${row.y}`;
+              const prev = paintedCells.get(key);
+              originalMergeRow(row);
+              if (!USER_ID) return;
+              const ownedColor = OWNED_CELLS.get(key);
+              if (ownedColor && row.color !== null) {
+                // If now owned by someone else (or color differs), log overwrite with previous color
+                const nowOwner = row.owner;
+                if (nowOwner && nowOwner !== USER_ID) {
+                  // prev may be before merge; prefer ownedColor
+                  GRIEF_EVENTS.push({ key, prevColor: ownedColor, at: Date.now() });
+                }
+              }
+            }
+
+            // Load owned on start
+            loadOwnedFromStorage();
             })();
 
             function getSupabaseConfig() {
@@ -815,6 +1094,8 @@
             const CHARGES_UNIT = 30;      // +30 charges per unit
             const CAPACITY_COST = 500;    // pigments per unit
             const CHARGES_COST = 500;     // pigments per unit
+            // Border pricing
+            const BORDER_PRICE_PER_PIXEL = 0.001; // $ per pixel
             let lastRefillAt = null; // Date (ms) anchor for regen cadence
             let regenTimer = null;
 
@@ -958,6 +1239,14 @@
                 const ok = USER_PIGMENTS >= chgCost;
                 chgBtn.disabled = !ok; chgBtn.classList.toggle('enabled', ok);
               }
+              // Border cost calc and enablement
+              const bw = parseInt(document.getElementById('borderWidth')?.value || '0', 10) || 0;
+              const bh = parseInt(document.getElementById('borderHeight')?.value || '0', 10) || 0;
+              const dollarCost = Math.max(0, bw * bh * BORDER_PRICE_PER_PIXEL);
+              const borderDollarCostEl = document.getElementById('borderDollarCost');
+              if (borderDollarCostEl) borderDollarCostEl.textContent = dollarCost.toFixed(2);
+              const createBorderBtn = document.getElementById('createBorder');
+              if (createBorderBtn) createBorderBtn.disabled = !(bw > 0 && bh > 0 && USER_ID);
             }
 
             // Store painted cells: "x,y" -> { color, owner }
@@ -1095,6 +1384,10 @@
               const pigmentsPlus = document.getElementById('pigmentsPlus');
               const pigmentsModal = document.getElementById('pigmentsModal');
               const pigmentsClose = document.getElementById('pigmentsClose');
+              // Border UI
+              const borderWidth = document.getElementById('borderWidth');
+              const borderHeight = document.getElementById('borderHeight');
+              const createBorder = document.getElementById('createBorder');
 
               loginBtn?.addEventListener('click', () => showAuthPrompt());
               googleBtn?.addEventListener('click', () => loginWithGoogle());
@@ -1113,6 +1406,36 @@
               storeClose?.addEventListener('click', () => { storeModal.style.display = 'none'; });
               pigmentsPlus?.addEventListener('click', () => { pigmentsModal.style.display = 'flex'; updatePigmentsUI(); });
               pigmentsClose?.addEventListener('click', () => { pigmentsModal.style.display = 'none'; });
+
+              // Pigments tier buttons (simulate purchase)
+              function pigmentsForDollars(dollars) {
+                // Map exact tiers (with bonuses)
+                switch (dollars) {
+                  case 5: return 25000;
+                  case 15: return 78750;
+                  case 30: return 165000;
+                  case 50: return 287500;
+                  case 75: return 450000;
+                  case 100: return 625000;
+                  default: return 0;
+                }
+              }
+              document.querySelectorAll('#pigmentsModal .price').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                  const cents = parseInt(e.currentTarget.getAttribute('data-amt') || '0', 10) || 0;
+                  const dollars = cents / 100;
+                  const add = pigmentsForDollars(dollars);
+                  if (!add) return;
+                  USER_PIGMENTS += add;
+                  await persistPigments();
+                  updatePigmentsUI();
+                });
+              });
+
+              // Border inputs update
+              borderWidth?.addEventListener('input', updateStoreButtonsEnabled);
+              borderHeight?.addEventListener('input', updateStoreButtonsEnabled);
+              createBorder?.addEventListener('click', () => startBorderPlacement());
 
               // Qty controls
               const capMinus = document.getElementById('capMinus');
