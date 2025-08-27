@@ -549,6 +549,36 @@
         .auth-card { background: #fff; border-radius: 16px; padding: 20px; width: 92%; max-width: 460px; box-shadow: 0 10px 40px rgba(0,0,0,0.18); display: flex; flex-direction: column; gap: 12px; }
         .google-btn { padding: 12px 14px; border: none; border-radius: 10px; cursor: pointer; font-weight: 700; background: #fff; color: #333; border: 1px solid #e3e6eb; display: flex; align-items: center; gap: 10px; justify-content: center; }
 
+        /* Store & Pigments UI */
+        .currency-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.9); border: 1px solid #e5e7eb; margin-left: 10px; box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+        .currency-pill .icon { font-size: 16px; }
+        .currency-pill .pill-plus { width: 20px; height: 20px; border-radius: 50%; border: 1px solid #d1d5db; background: #fff; cursor: pointer; line-height: 18px; font-weight: 700; }
+        .store-btn { margin-left: 10px; padding: 8px 12px; border-radius: 12px; border: 1px solid #e5e7eb; background: #fff; cursor: pointer; font-weight: 700; box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+
+        .store-modal { display: none; position: fixed; inset: 0; z-index: 3400; background: rgba(0,0,0,0.45); align-items: center; justify-content: center; }
+        .store-card { width: 96%; max-width: 920px; max-height: 86vh; overflow: auto; background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+        .store-header { display: flex; align-items: center; justify-content: space-between; }
+        .store-title { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 800; }
+        .store-close { border: none; background: transparent; font-size: 22px; cursor: pointer; }
+        .store-balance { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: #f3f7ff; color: #2563eb; font-weight: 800; }
+        .store-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 16px; }
+        .store-item { background: #eef2fa; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+        .store-item .icon { font-size: 28px; color: #2563eb; }
+        .store-item h4 { margin: 0; font-size: 20px; font-weight: 900; color: #1f2937; }
+        .store-item p { margin: 0; color: #475569; font-weight: 600; }
+        .qty { display: inline-flex; align-items: center; gap: 8px; }
+        .qty button { width: 28px; height: 28px; border-radius: 999px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; font-weight: 800; }
+        .qty input { width: 44px; text-align: center; border: 1px solid #d1d5db; border-radius: 10px; padding: 6px; font-weight: 800; }
+        .buy-btn { margin-top: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid #e5e7eb; background: #e6eefc; color: #94a3b8; font-weight: 900; cursor: not-allowed; }
+        .buy-btn.enabled { background: #2563eb; color: #fff; border-color: #2563eb; cursor: pointer; }
+
+        .pigments-modal { display: none; position: fixed; inset: 0; z-index: 3500; background: rgba(0,0,0,0.45); align-items: center; justify-content: center; }
+        .pigments-card { width: 96%; max-width: 720px; max-height: 86vh; overflow: auto; background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+        .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+        .tier { background: #f3f7ff; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+        .tier h5 { margin: 0; font-size: 18px; font-weight: 900; color: #1f2937; }
+        .tier p { margin: 0; color: #64748b; font-weight: 600; }
+        .tier .price { align-self: start; padding: 8px 12px; border-radius: 999px; background: #2563eb; color: #fff; font-weight: 900; border: none; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -575,6 +605,14 @@
     <div id="userBox" style="display:flex;">
         <button id="loginButton" title="Log in">Log In</button>
         <img id="profilePic" alt="Profile"/>
+        <!-- Pigments currency pill (only when logged in) -->
+        <div id="pigmentsPill" class="currency-pill" style="display:none;">
+            <span class="icon">🎨</span>
+            <span id="pigmentsCount">0</span>
+            <button id="pigmentsPlus" class="pill-plus" title="Get pigments">+</button>
+        </div>
+        <!-- Store button (only when logged in) -->
+        <button id="storeButton" class="store-btn" style="display:none;">🛍️ Store</button>
         <div id="profileDropdown">
             <div id="dropdownHeader">
                 <img id="dropdownProfilePic" alt="Profile"/>
@@ -590,6 +628,61 @@
         <h3>Sign in to paint</h3>
         <button id="googleSignInBtn" class="google-btn">Sign in with Google</button>
         <button id="authCancelBtn" class="sb-btn secondary" style="align-self:flex-end;">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Store Modal -->
+    <div id="storeModal" class="store-modal">
+      <div class="store-card">
+        <div class="store-header">
+          <div class="store-title">🛍️ <span>Store</span></div>
+          <div class="store-balance"><span>🎨</span><span id="storePigmentsBalance">0</span></div>
+          <button id="storeClose" class="store-close">×</button>
+        </div>
+        <div class="store-grid">
+          <div class="store-item" id="itemCapacity">
+            <div class="icon">⬆️</div>
+            <h4>+5 Max. Charges</h4>
+            <p>Increase your maximum paint charges capacity</p>
+            <div class="qty">
+              <button id="capMinus">−</button>
+              <input id="capQty" type="number" value="1" min="1" />
+              <button id="capPlus">+</button>
+            </div>
+            <button id="buyCapacity" class="buy-btn" disabled>🎨 <span id="capCost">500</span> Pigments</button>
+          </div>
+          <div class="store-item" id="itemCharges">
+            <div class="icon">🫗</div>
+            <h4>+30 Paint Charges</h4>
+            <p>Recharge paint charges</p>
+            <div class="qty">
+              <button id="chgMinus">−</button>
+              <input id="chgQty" type="number" value="1" min="1" />
+              <button id="chgPlus">+</button>
+            </div>
+            <button id="buyCharges" class="buy-btn" disabled>🎨 <span id="chgCost">500</span> Pigments</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pigments Purchase Modal (money) -->
+    <div id="pigmentsModal" class="pigments-modal">
+      <div class="pigments-card">
+        <div class="store-header">
+          <div class="store-title">🎨 <span>Pigments</span></div>
+          <div class="store-balance"><span>🎨</span><span id="pigmentsModalBalance">0</span></div>
+          <button id="pigmentsClose" class="store-close">×</button>
+        </div>
+        <div class="tiers">
+          <div class="tier"><h5>25,000 Pigments</h5><p>+0 bonus</p><button class="price" data-amt="500">$5.00</button></div>
+          <div class="tier"><h5>78,750 Pigments</h5><p>+3,750 bonus</p><button class="price" data-amt="1500">$15.00</button></div>
+          <div class="tier"><h5>165,000 Pigments</h5><p>+15,000 bonus</p><button class="price" data-amt="3000">$30.00</button></div>
+          <div class="tier"><h5>287,500 Pigments</h5><p>+37,500 bonus</p><button class="price" data-amt="5000">$50.00</button></div>
+          <div class="tier"><h5>450,000 Pigments</h5><p>+75,000 bonus</p><button class="price" data-amt="7500">$75.00</button></div>
+          <div class="tier"><h5>625,000 Pigments</h5><p>+125,000 bonus</p><button class="price" data-amt="10000">$100.00</button></div>
+        </div>
+        <p style="margin-top:10px;color:#64748b;font-weight:600;">Payments not connected yet. This is a preview UI.</p>
       </div>
     </div>
 
@@ -716,6 +809,12 @@
             const RECHARGE_SECONDS = 30; // 1 charge per 30s when not full
             let USER_CAPACITY = DEFAULT_CAPACITY;
             let USER_CHARGES = DEFAULT_CHARGES;
+            // Pigments currency (🎨)
+            let USER_PIGMENTS = 0; // stored per-user; fallback to localStorage if DB column missing
+            const CAPACITY_UNIT = 5;      // +5 capacity per unit
+            const CHARGES_UNIT = 30;      // +30 charges per unit
+            const CAPACITY_COST = 500;    // pigments per unit
+            const CHARGES_COST = 500;     // pigments per unit
             let lastRefillAt = null; // Date (ms) anchor for regen cadence
             let regenTimer = null;
 
@@ -801,9 +900,64 @@
                 // Use server anchor if present, but only keep it when below capacity
                 const serverAnchor = data.last_refill_at ? new Date(data.last_refill_at).getTime() : null;
                 lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? (serverAnchor || Date.now()) : null;
+                // Load pigments if column exists; else fallback local
+                if (typeof data.pigments === 'number') {
+                  USER_PIGMENTS = Math.max(0, data.pigments);
+                } else {
+                  const ls = localStorage.getItem(`pigments:${USER_ID}`);
+                  USER_PIGMENTS = ls ? Math.max(0, parseInt(ls, 10) || 0) : 0;
+                }
               }
               updatePaintButtonUI();
               startRegenTimer();
+              updatePigmentsUI();
+            }
+
+            function updatePigmentsUI() {
+              const pill = document.getElementById('pigmentsPill');
+              const count = document.getElementById('pigmentsCount');
+              const storeBal = document.getElementById('storePigmentsBalance');
+              const pigBal = document.getElementById('pigmentsModalBalance');
+              if (count) count.textContent = USER_PIGMENTS.toLocaleString();
+              if (storeBal) storeBal.textContent = USER_PIGMENTS.toLocaleString();
+              if (pigBal) pigBal.textContent = USER_PIGMENTS.toLocaleString();
+              // Show pill if logged in
+              if (pill) pill.style.display = USER_ID ? 'inline-flex' : 'none';
+              // Store button visibility handled in renderAuthUI
+              updateStoreButtonsEnabled();
+            }
+
+            async function persistPigments() {
+              if (supabase && USER_ID) {
+                try {
+                  const { error } = await supabase.from('user_paints').update({ pigments: USER_PIGMENTS }).eq('user_id', USER_ID);
+                  if (error) throw error;
+                } catch (e) {
+                  // fallback local
+                  localStorage.setItem(`pigments:${USER_ID}`, String(USER_PIGMENTS));
+                }
+              }
+            }
+
+            function updateStoreButtonsEnabled() {
+              const capQty = parseInt(document.getElementById('capQty')?.value || '1', 10) || 1;
+              const chgQty = parseInt(document.getElementById('chgQty')?.value || '1', 10) || 1;
+              const capCost = capQty * CAPACITY_COST;
+              const chgCost = chgQty * CHARGES_COST;
+              const capBtn = document.getElementById('buyCapacity');
+              const chgBtn = document.getElementById('buyCharges');
+              const capCostEl = document.getElementById('capCost');
+              const chgCostEl = document.getElementById('chgCost');
+              if (capCostEl) capCostEl.textContent = capCost.toLocaleString();
+              if (chgCostEl) chgCostEl.textContent = chgCost.toLocaleString();
+              if (capBtn) {
+                const ok = USER_PIGMENTS >= capCost;
+                capBtn.disabled = !ok; capBtn.classList.toggle('enabled', ok);
+              }
+              if (chgBtn) {
+                const ok = USER_PIGMENTS >= chgCost;
+                chgBtn.disabled = !ok; chgBtn.classList.toggle('enabled', ok);
+              }
             }
 
             // Store painted cells: "x,y" -> { color, owner }
@@ -829,11 +983,15 @@
               const dropdownPic = document.getElementById('dropdownProfilePic');
               const dropdownName = document.getElementById('dropdownUsername');
               const dropdown = document.getElementById('profileDropdown');
+              const storeBtn = document.getElementById('storeButton');
+              const pigmentsPill = document.getElementById('pigmentsPill');
               if (!loginBtn || !profilePic || !dropdown) return;
               if (!user) {
                 loginBtn.style.display = 'inline-block';
                 profilePic.style.display = 'none';
                 dropdown.style.display = 'none';
+                if (storeBtn) storeBtn.style.display = 'none';
+                if (pigmentsPill) pigmentsPill.style.display = 'none';
                 return;
               }
               const pic = user.user_metadata?.avatar_url || '';
@@ -842,6 +1000,8 @@
               if (pic) { profilePic.src = pic; dropdownPic.src = pic; }
               dropdownName.textContent = name;
               profilePic.style.display = 'block';
+              if (storeBtn) storeBtn.style.display = 'inline-flex';
+              if (pigmentsPill) pigmentsPill.style.display = 'inline-flex';
             }
 
             function showAuthPrompt() { const m = document.getElementById('authPromptModal'); if (m) m.style.display = 'flex'; }
@@ -862,6 +1022,12 @@
               USER_CAPACITY = DEFAULT_CAPACITY; USER_CHARGES = DEFAULT_CHARGES; lastRefillAt = null;
               renderAuthUI(null);
               updatePaintButtonUI();
+              // Close modals and reset pigments UI
+              const storeModal = document.getElementById('storeModal');
+              const pigmentsModal = document.getElementById('pigmentsModal');
+              if (storeModal) storeModal.style.display = 'none';
+              if (pigmentsModal) pigmentsModal.style.display = 'none';
+              updatePigmentsUI();
             }
 
             function mergeRow(row) {
@@ -921,10 +1087,19 @@
               const logoutBtn = document.getElementById('logoutButton');
               const googleBtn = document.getElementById('googleSignInBtn');
               const authCancelBtn = document.getElementById('authCancelBtn');
+              // Store & Pigments UI elements
+              const storeBtn = document.getElementById('storeButton');
+              const storeModal = document.getElementById('storeModal');
+              const storeClose = document.getElementById('storeClose');
+              const pigmentsPill = document.getElementById('pigmentsPill');
+              const pigmentsPlus = document.getElementById('pigmentsPlus');
+              const pigmentsModal = document.getElementById('pigmentsModal');
+              const pigmentsClose = document.getElementById('pigmentsClose');
 
               loginBtn?.addEventListener('click', () => showAuthPrompt());
               googleBtn?.addEventListener('click', () => loginWithGoogle());
               authCancelBtn?.addEventListener('click', () => hideAuthPrompt());
+              logoutBtn?.addEventListener('click', () => logout());
               profilePic?.addEventListener('click', () => {
                 if (dropdown.style.display === 'flex') dropdown.style.display = 'none';
                 else dropdown.style.display = 'flex';
@@ -934,7 +1109,47 @@
                   dropdown.style.display = 'none';
                 }
               });
-              logoutBtn?.addEventListener('click', () => logout());
+              storeBtn?.addEventListener('click', () => { storeModal.style.display = 'flex'; updateStoreButtonsEnabled(); updatePigmentsUI(); });
+              storeClose?.addEventListener('click', () => { storeModal.style.display = 'none'; });
+              pigmentsPlus?.addEventListener('click', () => { pigmentsModal.style.display = 'flex'; updatePigmentsUI(); });
+              pigmentsClose?.addEventListener('click', () => { pigmentsModal.style.display = 'none'; });
+
+              // Qty controls
+              const capMinus = document.getElementById('capMinus');
+              const capPlus = document.getElementById('capPlus');
+              const capQty = document.getElementById('capQty');
+              const chgMinus = document.getElementById('chgMinus');
+              const chgPlus = document.getElementById('chgPlus');
+              const chgQty = document.getElementById('chgQty');
+              [capMinus, capPlus, capQty, chgMinus, chgPlus, chgQty].forEach(el => el?.addEventListener('click', updateStoreButtonsEnabled));
+              capQty?.addEventListener('input', updateStoreButtonsEnabled);
+              chgQty?.addEventListener('input', updateStoreButtonsEnabled);
+
+              // Purchase actions
+              const buyCapacity = document.getElementById('buyCapacity');
+              const buyCharges = document.getElementById('buyCharges');
+              buyCapacity?.addEventListener('click', async () => {
+                const qty = Math.max(1, parseInt(capQty.value || '1', 10) || 1);
+                const cost = qty * CAPACITY_COST;
+                if (USER_PIGMENTS < cost) return;
+                USER_PIGMENTS -= cost;
+                USER_CAPACITY += qty * CAPACITY_UNIT;
+                await supabase?.from('user_paints').update({ capacity: USER_CAPACITY }).eq('user_id', USER_ID);
+                await persistPigments();
+                updatePaintButtonUI();
+                updatePigmentsUI();
+              });
+              buyCharges?.addEventListener('click', async () => {
+                const qty = Math.max(1, parseInt(chgQty.value || '1', 10) || 1);
+                const cost = qty * CHARGES_COST;
+                if (USER_PIGMENTS < cost) return;
+                USER_PIGMENTS -= cost;
+                USER_CHARGES += qty * CHARGES_UNIT; // allow over capacity
+                await supabase?.from('user_paints').update({ charges: USER_CHARGES }).eq('user_id', USER_ID);
+                await persistPigments();
+                updatePaintButtonUI();
+                updatePigmentsUI();
+              });
             });
 
             // Paint action -> Supabase upsert/delete
@@ -1563,7 +1778,7 @@
             el.style.display = tooMany ? 'block' : 'none';
         }
 
-        // Zoom so that the larger dimension shows exactly 4000 cells
+        // Zoom so that the larger dimension shows exactly 4000 cells (with slight epsilon to avoid rounding flicker)
         function zoomToTargetVisibleCells(target = 4000) {
             const vc = getVisibleGridCells();
             const ratioX = vc.x / target;
@@ -1572,7 +1787,8 @@
             if (worstRatio <= 1) return; // already at or below target
             const currentZoom = map.getZoom();
             const delta = Math.log2(worstRatio);
-            const targetZoom = Math.min(currentZoom + delta, typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : 22);
+            const epsilon = 0.02; // nudge to ensure <= target after rounding
+            const targetZoom = Math.min(currentZoom + delta + epsilon, typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : 22);
             map.easeTo({ zoom: targetZoom, duration: 800 });
         }
 
@@ -1594,6 +1810,18 @@
 
         // Also update on move to reflect viewport changes without zoom change
         map.on('move', () => {
+            updatePaintedCellsVisibility();
+            updateZoomHintVisibility();
+        });
+
+        // After interactions settle, re-evaluate to avoid threshold flicker
+        map.on('moveend', () => {
+            updatePaintedCellsVisibility();
+            updateZoomHintVisibility();
+        });
+
+        // Handle window/map resize which affects visible cell count
+        map.on('resize', () => {
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
         });
