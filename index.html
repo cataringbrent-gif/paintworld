@@ -600,13 +600,18 @@
         .input-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
         .input-group label { font-size: 13px; color: #64748b; font-weight: 500; }
         .input-group input { width: 80px; height: 44px; text-align: center; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px; background: white; }
-        .border-price { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 20px; font-size: 14px; font-weight: 500; color: #64748b; }
-        .border-price svg { color: #3b82f6; }
-        .price-formula { color: #64748b; }
+        .border-payment-buttons { display: flex; gap: 12px; margin-bottom: 20px; }
+        .border-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 12px 16px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .border-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .border-btn-pigments { background: #3b82f6; color: white; }
+        .border-btn-pigments:hover:not(:disabled) { background: #2563eb; }
+        .border-btn-dollars { background: #10b981; color: white; }
+        .border-btn-dollars:hover:not(:disabled) { background: #059669; }
 
         .pigments-modal { display: none; position: fixed; inset: 0; z-index: 3500; background: rgba(0,0,0,0.45); align-items: center; justify-content: center; }
         .pigments-card { width: 96%; max-width: 640px; height: auto; max-height: none; overflow: visible; background: #fff; border-radius: 24px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
         .pigments-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .pigments-header-right { display: flex; align-items: center; gap: 12px; }
         .pigments-title { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 600; color: #1e293b; }
         .pigments-balance-pill { display: flex; align-items: center; gap: 6px; background: #3b82f6; color: white; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500; }
         .pigments-balance-pill svg { color: white; }
@@ -774,16 +779,17 @@
               </div>
             </div>
             
-            <div class="border-price">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="12" r="10"/>
-              </svg>
-              <span id="borderCost">800</span>
-              <span>Pigments</span>
-              <span class="price-formula">• $15</span>
+            <div class="border-payment-buttons">
+              <button id="buyBorderPigments" class="border-btn border-btn-pigments" disabled>
+                <span>🎨</span>
+                <span id="borderPigmentsCost">800</span>
+                <span>Pigments</span>
+              </button>
+              <button id="buyBorderDollars" class="border-btn border-btn-dollars" disabled>
+                <span>$</span>
+                <span id="borderDollarsCost">15.00</span>
+              </button>
             </div>
-            
-            <button id="buyBorder" class="purchase-btn" disabled>Purchase</button>
           </div>
         </div>
       </div>
@@ -794,62 +800,60 @@
       <div class="pigments-card">
         <div class="pigments-header">
           <div class="pigments-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="10"/>
-            </svg>
-            <span>Droplets</span>
+            <span>🎨</span>
+            <span>Pigments</span>
           </div>
-          <div class="pigments-balance-pill">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="10"/>
-            </svg>
-            <span id="pigmentsModalBalance">0</span>
-            <span>Droplets</span>
+          <div class="pigments-header-right">
+            <div class="pigments-balance-pill">
+              <span>🎨</span>
+              <span id="pigmentsModalBalance">0</span>
+              <span>Pigments</span>
+            </div>
+            <button id="pigmentsClose" class="pigments-close">×</button>
           </div>
-          <button id="pigmentsClose" class="pigments-close">×</button>
         </div>
-        <p class="pigments-subtitle">You gain 1 droplet per pixel painted and 500 droplets per level</p>
+        <p class="pigments-subtitle">You gain 1 pigment per pixel painted and 500 pigments per level</p>
         <div class="tiers">
           <div class="tier">
-            <div class="tier-droplet">💧</div>
+            <div class="tier-droplet">🎨</div>
             <div class="tier-amount">25,000</div>
-            <div class="tier-unit">Droplets</div>
+            <div class="tier-unit">Pigments</div>
             <div class="tier-bonus">+0 bonus</div>
             <button class="tier-price" data-amt="500">$5.00</button>
           </div>
           <div class="tier">
-            <div class="tier-droplet">💧</div>
+            <div class="tier-droplet">🎨</div>
             <div class="tier-amount">78,750</div>
-            <div class="tier-unit">Droplets</div>
-            <div class="tier-bonus">75,000 Droplets +3,750 bonus</div>
+            <div class="tier-unit">Pigments</div>
+            <div class="tier-bonus">75,000 Pigments +3,750 bonus</div>
             <button class="tier-price" data-amt="1500">$15.00</button>
           </div>
           <div class="tier">
-            <div class="tier-droplet">💧</div>
+            <div class="tier-droplet">🎨</div>
             <div class="tier-amount">165,000</div>
-            <div class="tier-unit">Droplets</div>
-            <div class="tier-bonus">150,000 Droplets +15,000 bonus</div>
+            <div class="tier-unit">Pigments</div>
+            <div class="tier-bonus">150,000 Pigments +15,000 bonus</div>
             <button class="tier-price" data-amt="3000">$30.00</button>
           </div>
           <div class="tier">
-            <div class="tier-droplet">💧</div>
+            <div class="tier-droplet">🎨</div>
             <div class="tier-amount">287,500</div>
-            <div class="tier-unit">Droplets</div>
-            <div class="tier-bonus">250,000 Droplets +37,500 bonus</div>
+            <div class="tier-unit">Pigments</div>
+            <div class="tier-bonus">250,000 Pigments +37,500 bonus</div>
             <button class="tier-price" data-amt="5000">$50.00</button>
           </div>
           <div class="tier">
-            <div class="tier-droplet">💧</div>
+            <div class="tier-droplet">🎨</div>
             <div class="tier-amount">450,000</div>
-            <div class="tier-unit">Droplets</div>
-            <div class="tier-bonus">375,000 Droplets +75,000 bonus</div>
+            <div class="tier-unit">Pigments</div>
+            <div class="tier-bonus">375,000 Pigments +75,000 bonus</div>
             <button class="tier-price" data-amt="7500">$75.00</button>
           </div>
           <div class="tier">
-            <div class="tier-droplet">💧</div>
+            <div class="tier-droplet">🎨</div>
             <div class="tier-amount">625,000</div>
-            <div class="tier-unit">Droplets</div>
-            <div class="tier-bonus">500,000 Droplets +125,000 bonus</div>
+            <div class="tier-unit">Pigments</div>
+            <div class="tier-bonus">500,000 Pigments +125,000 bonus</div>
             <button class="tier-price" data-amt="10000">$100.00</button>
           </div>
         </div>
@@ -1116,17 +1120,32 @@
               return perimeter * BORDER_COST_PER_CELL;
             }
 
+            function calculateBorderDollarCost(width, height) {
+              // Dollar cost = perimeter * $0.25 per cell (roughly 1/32 of pigment cost)
+              const perimeter = 2 * (width + height);
+              return perimeter * 0.25;
+            }
+
             function updateBorderCost() {
               const width = parseInt(document.getElementById('borderWidth')?.value || '10', 10) || 10;
               const height = parseInt(document.getElementById('borderHeight')?.value || '10', 10) || 10;
-              const cost = calculateBorderCost(width, height);
-              const costEl = document.getElementById('borderCost');
-              if (costEl) costEl.textContent = cost.toLocaleString();
+              const pigmentsCost = calculateBorderCost(width, height);
+              const dollarsCost = calculateBorderDollarCost(width, height);
               
-              const buyBtn = document.getElementById('buyBorder');
-              if (buyBtn) {
-                const canAfford = USER_PIGMENTS >= cost;
-                buyBtn.disabled = !canAfford;
+              const pigmentsCostEl = document.getElementById('borderPigmentsCost');
+              const dollarsCostEl = document.getElementById('borderDollarsCost');
+              if (pigmentsCostEl) pigmentsCostEl.textContent = pigmentsCost.toLocaleString();
+              if (dollarsCostEl) dollarsCostEl.textContent = dollarsCost.toFixed(2);
+              
+              const pigmentsBtn = document.getElementById('buyBorderPigments');
+              const dollarsBtn = document.getElementById('buyBorderDollars');
+              if (pigmentsBtn) {
+                const canAfford = USER_PIGMENTS >= pigmentsCost;
+                pigmentsBtn.disabled = !canAfford;
+              }
+              if (dollarsBtn) {
+                // For now, always enable dollars button (payment integration pending)
+                dollarsBtn.disabled = false;
               }
             }
 
@@ -1351,21 +1370,32 @@
                 updatePigmentsUI();
               });
 
-              // Border purchase
-              const buyBorder = document.getElementById('buyBorder');
-              buyBorder?.addEventListener('click', async () => {
+              // Border purchase - Pigments
+              const buyBorderPigments = document.getElementById('buyBorderPigments');
+              buyBorderPigments?.addEventListener('click', async () => {
                 const width = parseInt(borderWidth.value || '10', 10) || 10;
                 const height = parseInt(borderHeight.value || '10', 10) || 10;
                 const cost = calculateBorderCost(width, height);
                 if (USER_PIGMENTS < cost) return;
                 
-                // For now, just deduct pigments (border functionality to be implemented)
+                // Deduct pigments
                 USER_PIGMENTS -= cost;
                 await persistPigments();
                 updatePigmentsUI();
+                updateStoreButtonsEnabled();
                 
                 // Show confirmation
-                alert(`Border purchased! ${width}x${height} protection activated.`);
+                alert(`Border purchased with pigments! ${width}x${height} protection activated.`);
+              });
+
+              // Border purchase - Dollars
+              const buyBorderDollars = document.getElementById('buyBorderDollars');
+              buyBorderDollars?.addEventListener('click', async () => {
+                const width = parseInt(borderWidth.value || '10', 10) || 10;
+                const height = parseInt(borderHeight.value || '10', 10) || 10;
+                
+                // For now, show placeholder for payment integration
+                alert(`Border purchase with dollars coming soon! ${width}x${height} for $${calculateBorderDollarCost(width, height).toFixed(2)}`);
               });
             });
 
@@ -1697,9 +1727,12 @@
                     cellFeature.properties.color = cell.color;
                     features.push(cellFeature);
                 });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
+                // Use requestAnimationFrame for smoother rendering
+                requestAnimationFrame(() => {
+                    map.getSource('painted-cells').setData({
+                        type: 'FeatureCollection',
+                        features: features
+                    });
                 });
         }
         
@@ -2014,6 +2047,14 @@
             updateGrid();
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
+            // Clear hover during zoom to prevent freeze
+            if (currentHoveredCell) {
+                map.getSource('grid-hover').setData({
+                    type: 'FeatureCollection',
+                    features: []
+                });
+                currentHoveredCell = null;
+            }
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
@@ -2035,6 +2076,27 @@
         map.on('moveend', () => {
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
+        });
+
+        // Re-enable hover after zoom/move operations complete
+        map.on('zoomend', () => {
+            // Force a mousemove event to re-establish hover if mouse is still over map
+            const mouseEvent = new MouseEvent('mousemove', {
+                bubbles: true,
+                cancelable: true,
+                clientX: window.innerWidth / 2,
+                clientY: window.innerHeight / 2
+            });
+            // Trigger hover update on next frame
+            requestAnimationFrame(() => {
+                if (map.getCanvas()) {
+                    const rect = map.getCanvas().getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    const point = map.project(map.getCenter());
+                    handleMouseMove({ point: { x: point.x, y: point.y } });
+                }
+            });
         });
 
         // Handle window/map resize which affects visible cell count
