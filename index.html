@@ -560,10 +560,13 @@
         .store-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
         .store-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; color: #1e293b; }
         .store-title svg { color: #3b82f6; }
+        .store-header-right { display: flex; align-items: center; gap: 12px; }
         .store-close { border: none; background: none; font-size: 20px; cursor: pointer; padding: 8px; border-radius: 6px; color: #64748b; }
         .store-close:hover { background: #f1f5f9; }
         .store-balance { display: flex; align-items: center; gap: 6px; background: #3b82f6; color: white; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500; }
         .store-balance svg { color: white; }
+        .pigments-plus-btn { width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(255,255,255,0.2); color: white; cursor: pointer; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; margin-left: 4px; }
+        .pigments-plus-btn:hover { background: rgba(255,255,255,0.3); }
         
         .store-section { margin-bottom: 32px; }
         .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -596,18 +599,28 @@
         .border-inputs { display: flex; gap: 16px; justify-content: center; margin-bottom: 20px; }
         .input-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
         .input-group label { font-size: 13px; color: #64748b; font-weight: 500; }
-        .input-group input { width: 60px; height: 36px; text-align: center; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; background: white; }
+        .input-group input { width: 80px; height: 44px; text-align: center; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px; background: white; }
         .border-price { display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 20px; font-size: 14px; font-weight: 500; color: #64748b; }
         .border-price svg { color: #3b82f6; }
         .price-formula { color: #64748b; }
 
         .pigments-modal { display: none; position: fixed; inset: 0; z-index: 3500; background: rgba(0,0,0,0.45); align-items: center; justify-content: center; }
-        .pigments-card { width: 96%; max-width: 720px; max-height: 86vh; overflow: auto; background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
-        .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
-        .tier { background: #f3f7ff; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
-        .tier h5 { margin: 0; font-size: 18px; font-weight: 900; color: #1f2937; }
-        .tier p { margin: 0; color: #64748b; font-weight: 600; }
-        .tier .price { align-self: start; padding: 8px 12px; border-radius: 999px; background: #2563eb; color: #fff; font-weight: 900; border: none; cursor: pointer; }
+        .pigments-card { width: 96%; max-width: 640px; height: auto; max-height: none; overflow: visible; background: #fff; border-radius: 24px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+        .pigments-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .pigments-title { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 600; color: #1e293b; }
+        .pigments-balance-pill { display: flex; align-items: center; gap: 6px; background: #3b82f6; color: white; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500; }
+        .pigments-balance-pill svg { color: white; }
+        .pigments-close { border: none; background: none; font-size: 20px; cursor: pointer; padding: 8px; border-radius: 6px; color: #64748b; }
+        .pigments-close:hover { background: #f1f5f9; }
+        .pigments-subtitle { margin: 0 0 24px 0; font-size: 14px; color: #64748b; }
+        .tiers { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+        .tier { background: #e0f2fe; border-radius: 16px; padding: 24px; text-align: center; }
+        .tier-droplet { color: #3b82f6; font-size: 24px; margin-bottom: 8px; }
+        .tier-amount { font-size: 28px; font-weight: 700; color: #3b82f6; margin: 0; }
+        .tier-unit { font-size: 16px; color: #3b82f6; font-weight: 500; }
+        .tier-bonus { font-size: 13px; color: #64748b; margin: 8px 0 16px 0; }
+        .tier-price { width: 100%; padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }
+        .tier-price:hover { background: #2563eb; }
     </style>
 </head>
 <body>
@@ -670,14 +683,17 @@
             </svg>
             <span>Store</span>
           </div>
-          <div class="store-balance">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="10"/>
-            </svg>
-            <span id="storePigmentsBalance">0</span>
-            <span>Pigments</span>
+          <div class="store-header-right">
+            <div class="store-balance">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="10"/>
+              </svg>
+              <span id="storePigmentsBalance">0</span>
+              <span>Pigments</span>
+              <button class="pigments-plus-btn" id="pigmentsPlusBtn">+</button>
+            </div>
+            <button id="storeClose" class="store-close">×</button>
           </div>
-          <button id="storeClose" class="store-close">×</button>
         </div>
         
         <div class="store-section">
@@ -776,20 +792,67 @@
     <!-- Pigments Purchase Modal (money) -->
     <div id="pigmentsModal" class="pigments-modal">
       <div class="pigments-card">
-        <div class="store-header">
-          <div class="store-title">🎨 <span>Pigments</span></div>
-          <div class="store-balance"><span>🎨</span><span id="pigmentsModalBalance">0</span></div>
-          <button id="pigmentsClose" class="store-close">×</button>
+        <div class="pigments-header">
+          <div class="pigments-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10"/>
+            </svg>
+            <span>Droplets</span>
+          </div>
+          <div class="pigments-balance-pill">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10"/>
+            </svg>
+            <span id="pigmentsModalBalance">0</span>
+            <span>Droplets</span>
+          </div>
+          <button id="pigmentsClose" class="pigments-close">×</button>
         </div>
+        <p class="pigments-subtitle">You gain 1 droplet per pixel painted and 500 droplets per level</p>
         <div class="tiers">
-          <div class="tier"><h5>25,000 Pigments</h5><p>+0 bonus</p><button class="price" data-amt="500">$5.00</button></div>
-          <div class="tier"><h5>78,750 Pigments</h5><p>+3,750 bonus</p><button class="price" data-amt="1500">$15.00</button></div>
-          <div class="tier"><h5>165,000 Pigments</h5><p>+15,000 bonus</p><button class="price" data-amt="3000">$30.00</button></div>
-          <div class="tier"><h5>287,500 Pigments</h5><p>+37,500 bonus</p><button class="price" data-amt="5000">$50.00</button></div>
-          <div class="tier"><h5>450,000 Pigments</h5><p>+75,000 bonus</p><button class="price" data-amt="7500">$75.00</button></div>
-          <div class="tier"><h5>625,000 Pigments</h5><p>+125,000 bonus</p><button class="price" data-amt="10000">$100.00</button></div>
+          <div class="tier">
+            <div class="tier-droplet">💧</div>
+            <div class="tier-amount">25,000</div>
+            <div class="tier-unit">Droplets</div>
+            <div class="tier-bonus">+0 bonus</div>
+            <button class="tier-price" data-amt="500">$5.00</button>
+          </div>
+          <div class="tier">
+            <div class="tier-droplet">💧</div>
+            <div class="tier-amount">78,750</div>
+            <div class="tier-unit">Droplets</div>
+            <div class="tier-bonus">75,000 Droplets +3,750 bonus</div>
+            <button class="tier-price" data-amt="1500">$15.00</button>
+          </div>
+          <div class="tier">
+            <div class="tier-droplet">💧</div>
+            <div class="tier-amount">165,000</div>
+            <div class="tier-unit">Droplets</div>
+            <div class="tier-bonus">150,000 Droplets +15,000 bonus</div>
+            <button class="tier-price" data-amt="3000">$30.00</button>
+          </div>
+          <div class="tier">
+            <div class="tier-droplet">💧</div>
+            <div class="tier-amount">287,500</div>
+            <div class="tier-unit">Droplets</div>
+            <div class="tier-bonus">250,000 Droplets +37,500 bonus</div>
+            <button class="tier-price" data-amt="5000">$50.00</button>
+          </div>
+          <div class="tier">
+            <div class="tier-droplet">💧</div>
+            <div class="tier-amount">450,000</div>
+            <div class="tier-unit">Droplets</div>
+            <div class="tier-bonus">375,000 Droplets +75,000 bonus</div>
+            <button class="tier-price" data-amt="7500">$75.00</button>
+          </div>
+          <div class="tier">
+            <div class="tier-droplet">💧</div>
+            <div class="tier-amount">625,000</div>
+            <div class="tier-unit">Droplets</div>
+            <div class="tier-bonus">500,000 Droplets +125,000 bonus</div>
+            <button class="tier-price" data-amt="10000">$100.00</button>
+          </div>
         </div>
-        <p style="margin-top:10px;color:#64748b;font-weight:600;">Payments not connected yet. This is a preview UI.</p>
       </div>
     </div>
 
@@ -1242,6 +1305,10 @@
               storeClose?.addEventListener('click', () => { storeModal.style.display = 'none'; });
               pigmentsPlus?.addEventListener('click', () => { pigmentsModal.style.display = 'flex'; updatePigmentsUI(); });
               pigmentsClose?.addEventListener('click', () => { pigmentsModal.style.display = 'none'; });
+
+              // Pigments plus button in store balance
+              const pigmentsPlusBtn = document.getElementById('pigmentsPlusBtn');
+              pigmentsPlusBtn?.addEventListener('click', () => { pigmentsModal.style.display = 'flex'; updatePigmentsUI(); });
 
               // Qty controls
               const capMinus = document.getElementById('capMinus');
