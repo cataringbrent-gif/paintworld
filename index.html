@@ -242,6 +242,32 @@
             opacity: 1;
         }
 
+        /* Zoom hint button (top-center) */
+        .zoom-hint {
+            position: fixed;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1600;
+            display: none;
+        }
+        .zoom-hint button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.92);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+            color: #2b425c;
+            font-weight: 700;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+        }
+        .zoom-hint button:hover { filter: brightness(1.02); }
+        .zoom-hint .icon { font-size: 16px; }
+
         .color-palette {
             position: fixed;
             bottom: 80px;
@@ -577,8 +603,11 @@
     
     
     
-    <!-- Notification for max cells reached -->
-    <div class="notification" id="notification">No more charges</div>
+    <!-- Zoom hint button (shown only when > 4000 x 4000 cells are visible) -->
+    <div class="zoom-hint" id="zoomHint"><button id="zoomHintBtn"><span class="icon">↔️</span>Zoom in to see the pixels</button></div>
+    
+    <!-- Notification bar disabled -->
+    <div class="notification" id="notification" style="display:none;">No more charges</div>
     
     <!-- Paint button -->
     <button class="paint-button" id="paintButton" style="display:flex; align-items:center; justify-content:center; background:#3498ff; color:#fff; border:none; border-radius:24px; padding:14px 24px; font-size:1.25rem; font-weight:700; box-shadow:0 2px 12px rgba(52,152,255,0.18); cursor:pointer; min-width:120px; gap:8px;">
@@ -1247,23 +1276,8 @@
         }
         
         function showNotification(message) {
-            const notification = document.getElementById('notification');
-            if (!notification) return;
-            if (defaultNotificationText === null) {
-                defaultNotificationText = notification.textContent;
-            }
-            if (message) {
-                notification.textContent = message;
-            }
-            notification.classList.add('show');
-            
-            // Hide notification after 3 seconds and restore default text if we changed it
-            setTimeout(() => {
-                notification.classList.remove('show');
-                if (message) {
-                    notification.textContent = defaultNotificationText;
-                }
-            }, 3000);
+            // Notifications disabled: no-op
+            return;
         }
         
         function checkPaintingEnabled() {
@@ -1524,6 +1538,8 @@
             updateGrid();
             // Ensure painted layer visibility respects 4000x4000 threshold on load
             updatePaintedCellsVisibility();
+            // Update zoom hint visibility on load
+            updateZoomHintVisibility();
         });
 
         // Toggle painted layer visibility depending on visible grid cells
@@ -1538,10 +1554,33 @@
             }
         }
 
+        // Show/hide zoom hint button when viewport exceeds 4000 x 4000 cells
+        function updateZoomHintVisibility() {
+            const el = document.getElementById('zoomHint');
+            if (!el) return;
+            const vc = getVisibleGridCells();
+            const tooMany = vc.x > 4000 || vc.y > 4000;
+            el.style.display = tooMany ? 'block' : 'none';
+        }
+
+        // Zoom so that the larger dimension shows exactly 4000 cells
+        function zoomToTargetVisibleCells(target = 4000) {
+            const vc = getVisibleGridCells();
+            const ratioX = vc.x / target;
+            const ratioY = vc.y / target;
+            const worstRatio = Math.max(ratioX, ratioY);
+            if (worstRatio <= 1) return; // already at or below target
+            const currentZoom = map.getZoom();
+            const delta = Math.log2(worstRatio);
+            const targetZoom = Math.min(currentZoom + delta, typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : 22);
+            map.easeTo({ zoom: targetZoom, duration: 800 });
+        }
+
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
             updatePaintedCellsVisibility();
+            updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
@@ -1556,6 +1595,15 @@
         // Also update on move to reflect viewport changes without zoom change
         map.on('move', () => {
             updatePaintedCellsVisibility();
+            updateZoomHintVisibility();
+        });
+
+        // Wire up zoom hint button
+        document.addEventListener('DOMContentLoaded', () => {
+            const btn = document.getElementById('zoomHintBtn');
+            if (btn) {
+                btn.addEventListener('click', () => zoomToTargetVisibleCells(4000));
+            }
         });
 
         map.on('mousemove', handleMouseMove);
