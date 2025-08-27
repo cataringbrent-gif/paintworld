@@ -886,16 +886,34 @@
               return false;
             }
 
-            map.on('click', (e) => {
-              if (!borderPlacementPending) return;
-              const { gx, gy } = lngLatToGrid(e.lngLat.lng, e.lngLat.lat);
-              const bw = parseInt(document.getElementById('borderWidth')?.value || '0', 10) || 0;
-              const bh = parseInt(document.getElementById('borderHeight')?.value || '0', 10) || 0;
-              if (areaOverlapsPaint(gx, gy, bw, bh)) { showNotification('Border must be placed on free area'); return; }
-              ACTIVE_BORDER = { user_id: USER_ID, x: gx, y: gy, width: bw, height: bh, created_at: Date.now() };
-              borderPlacementPending = false;
-              updateActiveBorderDisplay();
-            });
+            let borderEventsWired = false;
+            function wireBorderMapEvents() {
+              if (borderEventsWired) return;
+              borderEventsWired = true;
+              map.on('click', (e) => {
+                if (!borderPlacementPending) return;
+                const { gx, gy } = lngLatToGrid(e.lngLat.lng, e.lngLat.lat);
+                const bw = parseInt(document.getElementById('borderWidth')?.value || '0', 10) || 0;
+                const bh = parseInt(document.getElementById('borderHeight')?.value || '0', 10) || 0;
+                if (areaOverlapsPaint(gx, gy, bw, bh)) { showNotification('Border must be placed on free area'); return; }
+                ACTIVE_BORDER = { user_id: USER_ID, x: gx, y: gy, width: bw, height: bh, created_at: Date.now() };
+                borderPlacementPending = false;
+                updateActiveBorderDisplay();
+              });
+              map.on('mousemove', (e) => {
+                ensureHoverLayer();
+                const { gx, gy } = lngLatToGrid(e.lngLat.lng, e.lngLat.lat);
+                const cell = paintedCells.get(`${gx},${gy}`);
+                const src = map.getSource('owned-hover');
+                if (!src) return;
+                if (cell && cell.owner === USER_ID) {
+                  hoverHighlight = rectToPolygon(gx, gy, 1, 1);
+                  src.setData({ type:'FeatureCollection', features:[hoverHighlight] });
+                } else {
+                  src.setData({ type:'FeatureCollection', features: [] });
+                }
+              });
+            }
 
             async function confirmBorder() {
               if (!ACTIVE_BORDER) return;
@@ -933,19 +951,6 @@
                 map.addLayer({ id:'owned-hover', type:'line', source:'owned-hover', paint:{ 'line-color':'#f59e0b', 'line-width': 2, 'line-blur': 1.5 } });
               }
             }
-            map.on('mousemove', (e) => {
-              ensureHoverLayer();
-              const { gx, gy } = lngLatToGrid(e.lngLat.lng, e.lngLat.lat);
-              const cell = paintedCells.get(`${gx},${gy}`);
-              const src = map.getSource('owned-hover');
-              if (!src) return;
-              if (cell && cell.owner === USER_ID) {
-                hoverHighlight = rectToPolygon(gx, gy, 1, 1);
-                src.setData({ type:'FeatureCollection', features:[hoverHighlight] });
-              } else {
-                src.setData({ type:'FeatureCollection', features: [] });
-              }
-            });
 
             // ===== Anti-Grief: ownership tracking and Clean Grief =====
             const OWNED_CELLS = new Map(); // key -> color
@@ -1548,6 +1553,11 @@
                 center: [120.75754, 13.89790],
                 zoom: 7.3,
                 dragRotate: false
+            });
+
+            // Ensure map events for border/hover are registered after the map is ready
+            map.on('load', () => {
+              try { wireBorderMapEvents(); } catch (e) { console.error('wireBorderMapEvents failed', e); }
             });
 
 
