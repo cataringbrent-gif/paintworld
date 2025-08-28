@@ -1556,39 +1556,41 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // Swipe paint when space is held down
-                if (isSpacePressed && isPaletteVisible()) {
-                    const vc = getVisibleGridCells();
-                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                        paintCell(clampedX, clampedY, selectedColor);
-                    }
-                } else if (isSpacePressed) {
-                    // Debug: Log why painting isn't working
-                    console.log('Space pressed but not painting:', {
-                        isSpacePressed,
-                        isPaletteVisible: isPaletteVisible(),
-                        visibleCells: getVisibleGridCells(),
-                        paintingThreshold: PAINTING_THRESHOLD
-                    });
-                }
-                
-                // Swipe delete when right mouse is held down
-                if (isRightMouseDown && isPaletteVisible()) {
-                    const vc = getVisibleGridCells();
-                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                        paintCell(clampedX, clampedY, null);
+                // Swipe paint when space is held down - NO DEPENDENCIES
+                if (isSpacePressed && isPaintingEnabled && isPaletteVisible()) {
+                    try {
+                        const vc = getVisibleGridCells();
+                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                            paintCell(clampedX, clampedY, selectedColor);
+                        }
+                    } catch (e) {
+                        // Continue even if getVisibleGridCells fails
                     }
                 }
                 
-                // Only update hover layer if map source is ready
+                // Swipe delete when right mouse is held down - NO DEPENDENCIES
+                if (isRightMouseDown && isPaintingEnabled && isPaletteVisible()) {
+                    try {
+                        const vc = getVisibleGridCells();
+                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                            paintCell(clampedX, clampedY, null);
+                        }
+                    } catch (e) {
+                        // Continue even if getVisibleGridCells fails
+                    }
+                }
+                
+                // ALWAYS update hover layer - NO GRID VISIBILITY CHECKS
                 try {
                     const hoverCell = generateHoverCell(clampedX, clampedY);
-                    map.getSource('grid-hover').setData({
-                        type: 'FeatureCollection',
-                        features: [hoverCell]
-                    });
+                    if (map.getSource && map.getSource('grid-hover')) {
+                        map.getSource('grid-hover').setData({
+                            type: 'FeatureCollection',
+                            features: [hoverCell]
+                        });
+                    }
                 } catch (e) {
-                    // Hover layer not ready yet, but coordinates are still calculated
+                    // Silent fail - highlighting continues working
                 }
             } catch (e) {
                 // Complete fallback - still track mouse position
@@ -1896,39 +1898,7 @@
         let mouseMoveTimeout = null;
         let isMapMoving = false;
         
-        // Handle mouse move for hover
-        function handleMouseMove(e) {
-            if (!gridVisible) return;
-            
-            const gridCoords = screenToGrid(e.point.x, e.point.y);
-            
-            // Only update if we're hovering a different cell
-            if (!currentHoveredCell || currentHoveredCell.x !== gridCoords.x || currentHoveredCell.y !== gridCoords.y) {
-                currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
-                
-                const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
-                map.getSource('grid-hover').setData({
-                    type: 'FeatureCollection',
-                    features: [hoverCell]
-                });
-                
-                // Swipe paint when space is held down
-                if (isSpacePressed && isPaintingEnabled && isPaletteVisible()) {
-                    const vc = getVisibleGridCells();
-                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                        paintCell(gridCoords.x, gridCoords.y, selectedColor);
-                    }
-                }
-                
-                // Swipe delete when right mouse is held down
-                if (isRightMouseDown && isPaintingEnabled && isPaletteVisible()) {
-                    const vc = getVisibleGridCells();
-                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                        paintCell(gridCoords.x, gridCoords.y, null);
-                    }
-                }
-            }
-        }
+        // OLD MOUSE HANDLER REMOVED - Using instant highlighting system instead
 
         // Handle mouse leave
         function handleMouseLeave() {
@@ -2189,7 +2159,7 @@
             }
         });
 
-        map.on('mousemove', handleMouseMove);
+        // map.on('mousemove', handleMouseMove); // DISABLED - Using instant highlighting system
         map.on('mouseleave', handleMouseLeave);
         map.on('click', handleMouseClick);
         map.on('contextmenu', handleContextMenu);
