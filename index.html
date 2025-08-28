@@ -1504,7 +1504,22 @@
                 style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
                 center: [120.75754, 13.89790],
                 zoom: 7.3,
-                dragRotate: false
+                dragRotate: false,
+                // Performance optimizations
+                antialias: false,
+                preserveDrawingBuffer: false,
+                refreshExpiredTiles: false,
+                renderWorldCopies: false,
+                maxTileCacheSize: 50,
+                transformRequest: (url, resourceType) => {
+                    // Cache tiles aggressively
+                    if (resourceType === 'Tile') {
+                        return {
+                            url: url,
+                            headers: { 'Cache-Control': 'max-age=3600' }
+                        };
+                    }
+                }
             });
 
 
@@ -1848,15 +1863,15 @@
             
             // No bottom-left coordinate display
             
-            // Check if painting is enabled (zoom level check)
-            checkPaintingEnabled();
+            // Check if painting is enabled (zoom level check) - immediate, no debounce
+            const visibleCells = getVisibleGridCells();
+            isPaintingEnabled = visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD;
             
             // Only highlight cells when zoomed in enough (visible area <= 4000 × 4000 cells)
-            const visibleCells = getVisibleGridCells();
             const shouldHighlight = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
             if (shouldHighlight) {
-                // Update hover cell (still using full world coordinates for rendering)
+                // Update hover cell immediately - no debounce for responsive hover
                 if (currentHoveredCell?.x !== gridCoords.x || currentHoveredCell?.y !== gridCoords.y) {
                     currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
                     
@@ -2097,11 +2112,33 @@
             map.easeTo({ zoom: targetZoom, duration: 800 });
         }
 
+        // Throttle expensive operations to improve performance
+        let updateTimeout = null;
+        let isUpdating = false;
+        
+        function throttledUpdate() {
+            if (isUpdating) return;
+            isUpdating = true;
+            requestAnimationFrame(() => {
+                updatePaintedCellsVisibility();
+                updateZoomHintVisibility();
+                isUpdating = false;
+            });
+        }
+        
+        function debouncedFullUpdate() {
+            if (updateTimeout) clearTimeout(updateTimeout);
+            updateTimeout = setTimeout(() => {
+                updateGridVisibility();
+                updateGrid();
+                updatePaintedCellsVisibility();
+                updateZoomHintVisibility();
+                // checkPaintingEnabled() is now handled immediately in handleMouseMove
+            }, 100);
+        }
+
         map.on('zoom', () => {
-            updateGridVisibility();
-            updateGrid();
-            updatePaintedCellsVisibility();
-            updateZoomHintVisibility();
+            debouncedFullUpdate();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
@@ -2139,6 +2176,9 @@
             }
         });
 
+        map.on('move', throttledUpdate);
+        map.on('moveend', throttledUpdate);
+        map.on('resize', throttledUpdate);
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
         map.on('click', handleMouseClick);
