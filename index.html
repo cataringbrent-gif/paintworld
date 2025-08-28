@@ -1782,13 +1782,7 @@
         
         // Handle mouse move for hover
         function handleMouseMove(e) {
-            if (!gridVisible || isMapMoving) return;
-            
-            // Throttle mousemove events to reduce CPU usage
-            if (mouseMoveTimeout) return;
-            mouseMoveTimeout = setTimeout(() => {
-                mouseMoveTimeout = null;
-            }, 16); // ~60fps throttling
+            if (!gridVisible) return;
             
             const gridCoords = screenToGrid(e.point.x, e.point.y);
             
@@ -2039,29 +2033,13 @@
             }
         });
 
-        // Track map movement to pause cell highlighting during pan/zoom
+        // Track map movement for reference (but don't block highlighting)
         map.on('movestart', () => {
             isMapMoving = true;
-            // Immediately clear hover state when map movement starts
-            if (currentHoveredCell) {
-                map.getSource('grid-hover').setData({
-                    type: 'FeatureCollection',
-                    features: []
-                });
-                currentHoveredCell = null;
-            }
         });
 
         map.on('zoomstart', () => {
             isMapMoving = true;
-            // Immediately clear hover state when zoom starts
-            if (currentHoveredCell) {
-                map.getSource('grid-hover').setData({
-                    type: 'FeatureCollection',
-                    features: []
-                });
-                currentHoveredCell = null;
-            }
         });
 
         // Also update on move to reflect viewport changes without zoom change
@@ -2101,6 +2079,97 @@
         map.on('contextmenu', handleContextMenu);
         map.on('mousedown', handleMouseDown);
         map.on('mouseup', handleMouseUp);
+
+        // Ultra-responsive cell highlighting with requestAnimationFrame
+        let pendingHighlightUpdate = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        
+        function updateHighlight() {
+            // Direct coordinate calculation that works even before map loads
+            try {
+                let lngLat;
+                
+                // Try map.unproject first (fastest when map is loaded)
+                try {
+                    lngLat = map.unproject([lastMouseX, lastMouseY]);
+                } catch (e) {
+                    // Fallback: Manual coordinate calculation when map isn't ready
+                    const mapContainer = map.getContainer();
+                    const rect = mapContainer.getBoundingClientRect();
+                    const mapWidth = rect.width;
+                    const mapHeight = rect.height;
+                    
+                    // Get current map center and zoom (or use defaults if not available)
+                    let center, zoom;
+                    try {
+                        center = map.getCenter();
+                        zoom = map.getZoom();
+                    } catch (e) {
+                        // Use initial map state
+                        center = { lng: 0, lat: 0 };
+                        zoom = 2;
+                    }
+                    
+                    // Calculate lng/lat from mouse position manually
+                    const scale = 256 * Math.pow(2, zoom);
+                    const centerX = (center.lng + 180) / 360 * scale;
+                    const centerY = (1 - Math.log(Math.tan(center.lat * Math.PI / 180) + 1 / Math.cos(center.lat * Math.PI / 180)) / Math.PI) / 2 * scale;
+                    
+                    const mouseOffsetX = lastMouseX - mapWidth / 2;
+                    const mouseOffsetY = lastMouseY - mapHeight / 2;
+                    
+                    const pixelX = centerX + mouseOffsetX;
+                    const pixelY = centerY + mouseOffsetY;
+                    
+                    const lng = (pixelX / scale) * 360 - 180;
+                    const n = Math.PI - 2 * Math.PI * (pixelY / scale);
+                    const lat = 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+                    
+                    lngLat = { lng, lat };
+                }
+                
+                // Convert to Web Mercator
+                const x = lngLat.lng * 20037508.34 / 180;
+                const y = Math.log(Math.tan((90 + lngLat.lat) * Math.PI / 360)) / (Math.PI / 180);
+                const yMercator = y * 20037508.34 / 180;
+                
+                // Convert to grid coordinates
+                const gridX = Math.floor((x + 20037508.34) / CELL_SIZE_METERS);
+                const gridY = Math.floor((yMercator + 20037508.34) / CELL_SIZE_METERS);
+                const clampedX = Math.max(0, Math.min(1999999, gridX));
+                const clampedY = Math.max(0, Math.min(1999999, gridY));
+                
+                // Always update immediately - no cell comparison
+                currentHoveredCell = { x: clampedX, y: clampedY };
+                
+                // Only update hover layer if map source is ready
+                try {
+                    const hoverCell = generateHoverCell(clampedX, clampedY);
+                    map.getSource('grid-hover').setData({
+                        type: 'FeatureCollection',
+                        features: [hoverCell]
+                    });
+                } catch (e) {
+                    // Hover layer not ready yet, but coordinates are still calculated
+                }
+            } catch (e) {
+                // Complete fallback - still track mouse position
+                currentHoveredCell = { x: 1000000, y: 1000000 }; // Center of grid as fallback
+            }
+        }
+
+        // Add direct DOM mousemove listener with ultra-fast response
+        const mapCanvas = map.getCanvasContainer();
+        mapCanvas.addEventListener('mousemove', (e) => {
+            // Convert DOM mouse coordinates to MapLibre point format
+            const rect = mapCanvas.getBoundingClientRect();
+            lastMouseX = e.clientX - rect.left;
+            lastMouseY = e.clientY - rect.top;
+            
+            // Immediate update without waiting for requestAnimationFrame
+            updateHighlight();
+        });
 
         // Keyboard event listeners for spacebar swipe painting
         document.addEventListener('keydown', (e) => {
