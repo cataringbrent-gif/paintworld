@@ -1564,51 +1564,34 @@
         // INSTANT HIGHLIGHTING SYSTEM - Works immediately on page load
         let lastMouseX = 0;
         let lastMouseY = 0;
-        let lastHoverUpdate = 0; // Throttle hover updates to prevent freezing during rapid zoom
         
         function updateHighlight() {
-            // ULTRA-FAST coordinate calculation - NEVER blocks on map operations
+            // Direct coordinate calculation that works even before map loads
             try {
                 let lngLat;
                 
-                // Always try manual calculation first during rapid operations
-                const now = Date.now();
-                const useManualCalc = (now - lastHoverUpdate < 100) || isMapMoving;
-                
-                if (!useManualCalc) {
-                    // Try map.unproject only when map is stable
-                    try {
-                        if (map.isStyleLoaded() && !isMapMoving) {
-                            lngLat = map.unproject([lastMouseX, lastMouseY]);
-                        } else {
-                            throw new Error('Map not ready');
-                        }
-                    } catch (e) {
-                        useManualCalc = true;
-                    }
-                }
-                
-                if (useManualCalc || !lngLat) {
-                    // ALWAYS WORKING fallback calculation - completely independent
+                // Try map.unproject first (fastest when map is loaded)
+                try {
+                    lngLat = map.unproject([lastMouseX, lastMouseY]);
+                } catch (e) {
+                    // Fallback: Manual coordinate calculation when map isn't ready
                     const mapContainer = map.getContainer();
                     const rect = mapContainer.getBoundingClientRect();
                     const mapWidth = rect.width;
                     const mapHeight = rect.height;
                     
-                    // Get current map center and zoom with safe defaults
-                    let center = { lng: 0, lat: 0 };
-                    let zoom = 2;
-                    
+                    // Get current map center and zoom (or use defaults if not available)
+                    let center, zoom;
                     try {
-                        if (map.isStyleLoaded()) {
-                            center = map.getCenter();
-                            zoom = map.getZoom();
-                        }
+                        center = map.getCenter();
+                        zoom = map.getZoom();
                     } catch (e) {
-                        // Use safe defaults - never block
+                        // Use initial map state
+                        center = { lng: 0, lat: 0 };
+                        zoom = 2;
                     }
                     
-                    // Manual Web Mercator calculation - ALWAYS works
+                    // Calculate lng/lat from mouse position manually
                     const scale = 256 * Math.pow(2, zoom);
                     const centerX = (center.lng + 180) / 360 * scale;
                     const centerY = (1 - Math.log(Math.tan(center.lat * Math.PI / 180) + 1 / Math.cos(center.lat * Math.PI / 180)) / Math.PI) / 2 * scale;
@@ -1658,21 +1641,17 @@
                     }
                 }
                 
-                // ULTRA-ROBUST hover layer update - NEVER blocks on map state
+                // ALWAYS update hover layer - NO GRID VISIBILITY CHECKS
                 try {
-                    // Skip hover updates during rapid operations to prevent freezing
-                    if (Date.now() - lastHoverUpdate < 16) return; // Max 60fps hover updates
-                    lastHoverUpdate = Date.now();
-                    
                     const hoverCell = generateHoverCell(clampedX, clampedY);
-                    if (map.getSource && map.getSource('grid-hover') && map.isStyleLoaded()) {
+                    if (map.getSource && map.getSource('grid-hover')) {
                         map.getSource('grid-hover').setData({
                             type: 'FeatureCollection',
                             features: [hoverCell]
                         });
                     }
                 } catch (e) {
-                    // Complete silence - never interrupt coordinate calculation
+                    // Silent fail - highlighting continues working
                 }
             } catch (e) {
                 // Complete fallback - still track mouse position
