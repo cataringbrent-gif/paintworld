@@ -1556,6 +1556,22 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
+                // Swipe paint when space is held down
+                if (isSpacePressed && isPaintingEnabled && isPaletteVisible()) {
+                    const vc = getVisibleGridCells();
+                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                        paintCell(clampedX, clampedY, selectedColor);
+                    }
+                }
+                
+                // Swipe delete when right mouse is held down
+                if (isRightMouseDown && isPaintingEnabled && isPaletteVisible()) {
+                    const vc = getVisibleGridCells();
+                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                        paintCell(clampedX, clampedY, null);
+                    }
+                }
+                
                 // Only update hover layer if map source is ready
                 try {
                     const hoverCell = generateHoverCell(clampedX, clampedY);
