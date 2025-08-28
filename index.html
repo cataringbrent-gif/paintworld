@@ -1412,14 +1412,26 @@
                       showNotification('You can only delete your own paint.');
                       return;
                   }
-                  // Delete row (RLS enforces ownership)
+                  
+                  // OPTIMISTIC UPDATE: Remove from UI immediately
+                  paintedCells.delete(cellKey);
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Background database update
                   const { error } = await supabase
                     .from('paints')
                     .delete()
                     .eq('x', gridX)
                     .eq('y', gridY);
-                  if (error) { console.error('Delete error', error); return; }
-                  paintedCells.delete(cellKey);
+                  if (error) { 
+                    console.error('Delete error', error);
+                    // Revert optimistic update on error
+                    paintedCells.set(cellKey, cell);
+                    updatePaintedCellsDisplay();
+                    updateCellCounter();
+                    return;
+                  }
               } else {
                   // Require charges for authenticated users
                   if (USER_ID) {
@@ -1440,28 +1452,51 @@
                     // Allow color change without spending a charge
                     spendCharge = false;
                   }
+                  
+                  // OPTIMISTIC UPDATE: Show paint immediately
+                  const newCell = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
+                  paintedCells.set(cellKey, newCell);
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Update charges UI immediately if spending
+                  if (USER_ID && spendCharge) {
+                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                    updatePaintButtonUI();
+                  }
+                  
+                  // Background database update
                   const { error } = await supabase
                     .from('paints')
                     .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
-                  if (error) { console.error('Upsert error', error); return; }
-                  paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  // Spend a charge if signed-in
+                  if (error) { 
+                    console.error('Upsert error', error);
+                    // Revert optimistic updates on error
+                    if (cell) {
+                      paintedCells.set(cellKey, cell);
+                    } else {
+                      paintedCells.delete(cellKey);
+                    }
+                    if (USER_ID && spendCharge) {
+                      USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
+                      lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                      updatePaintButtonUI();
+                    }
+                    updatePaintedCellsDisplay();
+                    updateCellCounter();
+                    return;
+                  }
+                  
+                  // Background charge persistence (don't await to avoid blocking)
                   if (USER_ID && spendCharge) {
-                    const prevCharges = USER_CHARGES;
-                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    // Start cooldown only when charges drop below capacity; clear if still >= capacity
-                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                    updatePaintButtonUI();
-                    // Persist spend
-                    await supabase.from('user_paints').update({
+                    supabase.from('user_paints').update({
                       charges: USER_CHARGES,
                       last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
                       capacity: USER_CAPACITY
-                    }).eq('user_id', USER_ID);
+                    }).eq('user_id', USER_ID).catch(err => console.error('Charge update error', err));
                   }
               }
-              updatePaintedCellsDisplay();
-              updateCellCounter();
             }
             const map = new maplibregl.Map({
                 container: 'map',
