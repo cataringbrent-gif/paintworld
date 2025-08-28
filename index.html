@@ -2042,10 +2042,26 @@
         // Track map movement to pause cell highlighting during pan/zoom
         map.on('movestart', () => {
             isMapMoving = true;
+            // Immediately clear hover state when map movement starts
+            if (currentHoveredCell) {
+                map.getSource('grid-hover').setData({
+                    type: 'FeatureCollection',
+                    features: []
+                });
+                currentHoveredCell = null;
+            }
         });
 
         map.on('zoomstart', () => {
             isMapMoving = true;
+            // Immediately clear hover state when zoom starts
+            if (currentHoveredCell) {
+                map.getSource('grid-hover').setData({
+                    type: 'FeatureCollection',
+                    features: []
+                });
+                currentHoveredCell = null;
+            }
         });
 
         // Also update on move to reflect viewport changes without zoom change
