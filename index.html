@@ -1399,7 +1399,7 @@
             // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
             let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
             let paintBatchTimeout = null;
-            const PAINT_BATCH_DELAY = 50; // ms - ultra-fast batching for maximum responsiveness
+            const PAINT_BATCH_DELAY = 10; // ms - 0.01 second batching for instant response
             
             function paintCell(gridX, gridY, color) {
               const cellKey = `${gridX},${gridY}`;
@@ -1429,11 +1429,9 @@
                     updatePaintButtonUI();
                   }
                   
-                  // IMMEDIATE visual update - no delays
-                  requestAnimationFrame(() => {
-                    updatePaintedCellsDisplay();
-                    updateCellCounter();
-                  });
+                  // INSTANT visual update - no requestAnimationFrame delay
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
                   
                   // Queue DB delete with charge restoration
                   paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
@@ -1462,11 +1460,9 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // IMMEDIATE visual update - no delays
-                  requestAnimationFrame(() => {
-                    updatePaintedCellsDisplay();
-                    updateCellCounter();
-                  });
+                  // INSTANT visual update - no requestAnimationFrame delay
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
                   
                   // Spend charge locally
                   if (USER_ID && spendCharge) {
