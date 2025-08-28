@@ -1396,8 +1396,12 @@
               });
             });
 
-            // Paint action -> Supabase upsert/delete
-            async function paintCell(gridX, gridY, color) {
+            // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
+            let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
+            let paintBatchTimeout = null;
+            const PAINT_BATCH_DELAY = 100; // ms - batch DB writes for ultra-responsive painting
+            
+            function paintCell(gridX, gridY, color) {
               const cellKey = `${gridX},${gridY}`;
               const cell = paintedCells.get(cellKey);
 
@@ -1412,14 +1416,14 @@
                       showNotification('You can only delete your own paint.');
                       return;
                   }
-                  // Delete row (RLS enforces ownership)
-                  const { error } = await supabase
-                    .from('paints')
-                    .delete()
-                    .eq('x', gridX)
-                    .eq('y', gridY);
-                  if (error) { console.error('Delete error', error); return; }
+                  // INSTANT local update
                   paintedCells.delete(cellKey);
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Queue DB delete
+                  paintQueue.set(cellKey, { gridX, gridY, color: null, timestamp: Date.now() });
+                  schedulePaintBatch();
               } else {
                   // Require charges for authenticated users
                   if (USER_ID) {
@@ -1440,28 +1444,63 @@
                     // Allow color change without spending a charge
                     spendCharge = false;
                   }
-                  const { error } = await supabase
-                    .from('paints')
-                    .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
-                  if (error) { console.error('Upsert error', error); return; }
+                  
+                  // INSTANT local update
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  // Spend a charge if signed-in
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Spend charge locally
                   if (USER_ID && spendCharge) {
-                    const prevCharges = USER_CHARGES;
                     USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    // Start cooldown only when charges drop below capacity; clear if still >= capacity
                     lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
                     updatePaintButtonUI();
-                    // Persist spend
-                    await supabase.from('user_paints').update({
-                      charges: USER_CHARGES,
-                      last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                      capacity: USER_CAPACITY
-                    }).eq('user_id', USER_ID);
                   }
+                  
+                  // Queue DB write
+                  paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
+                  schedulePaintBatch();
               }
-              updatePaintedCellsDisplay();
-              updateCellCounter();
+            }
+            
+            function schedulePaintBatch() {
+              if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
+              paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
+            }
+            
+            async function processPaintBatch() {
+              if (paintQueue.size === 0) return;
+              
+              const batch = Array.from(paintQueue.values());
+              paintQueue.clear();
+              
+              // Process deletes
+              const deletes = batch.filter(p => p.color === null);
+              if (deletes.length > 0) {
+                for (const del of deletes) {
+                  await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
+                }
+              }
+              
+              // Process paints
+              const paints = batch.filter(p => p.color !== null);
+              if (paints.length > 0) {
+                const upserts = paints.map(p => ({
+                  x: p.gridX, y: p.gridY, color: p.color,
+                  owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
+                }));
+                await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
+                
+                // Update charges in batch
+                const chargeSpends = paints.filter(p => p.spendCharge).length;
+                if (chargeSpends > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
+                }
+              }
             }
             const map = new maplibregl.Map({
                 container: 'map',
@@ -1556,27 +1595,50 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // Swipe paint when space is held down - NO DEPENDENCIES
-                if (isSpacePressed && isPaintingEnabled && isPaletteVisible()) {
+                // Swipe paint when space is held down - ULTRA ROBUST
+                if (isSpacePressed) {
+                    console.log('Space pressed, painting enabled:', isPaintingEnabled, 'palette visible:', isPaletteVisible());
                     try {
-                        const vc = getVisibleGridCells();
-                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                            paintCell(clampedX, clampedY, selectedColor);
+                        // Check if painting is allowed
+                        if (isPaintingEnabled && isPaletteVisible()) {
+                            try {
+                                const vc = getVisibleGridCells();
+                                console.log('Visible cells:', vc);
+                                if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                                    console.log('Swipe painting cell:', clampedX, clampedY, selectedColor);
+                                    paintCell(clampedX, clampedY, selectedColor);
+                                }
+                            } catch (e) {
+                                // Fallback: paint anyway if we can't check visible cells
+                                console.log('Fallback swipe painting:', clampedX, clampedY);
+                                paintCell(clampedX, clampedY, selectedColor);
+                            }
                         }
                     } catch (e) {
-                        // Continue even if getVisibleGridCells fails
+                        console.log('Swipe paint error:', e);
                     }
                 }
                 
-                // Swipe delete when right mouse is held down - NO DEPENDENCIES
-                if (isRightMouseDown && isPaintingEnabled && isPaletteVisible()) {
+                // Swipe delete when right mouse is held down - ULTRA ROBUST
+                if (isRightMouseDown) {
+                    console.log('Right mouse down, painting enabled:', isPaintingEnabled, 'palette visible:', isPaletteVisible());
                     try {
-                        const vc = getVisibleGridCells();
-                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                            paintCell(clampedX, clampedY, null);
+                        // Check if painting is allowed
+                        if (isPaintingEnabled && isPaletteVisible()) {
+                            try {
+                                const vc = getVisibleGridCells();
+                                if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                                    console.log('Swipe erasing cell:', clampedX, clampedY);
+                                    paintCell(clampedX, clampedY, null);
+                                }
+                            } catch (e) {
+                                // Fallback: erase anyway if we can't check visible cells
+                                console.log('Fallback swipe erasing:', clampedX, clampedY);
+                                paintCell(clampedX, clampedY, null);
+                            }
                         }
                     } catch (e) {
-                        // Continue even if getVisibleGridCells fails
+                        console.log('Swipe erase error:', e);
                     }
                 }
                 
