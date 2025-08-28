@@ -1557,15 +1557,23 @@
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
                 // Swipe paint when space is held down
-                if (isSpacePressed && isPaintingEnabled && isPaletteVisible()) {
+                if (isSpacePressed && isPaletteVisible()) {
                     const vc = getVisibleGridCells();
                     if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
                         paintCell(clampedX, clampedY, selectedColor);
                     }
+                } else if (isSpacePressed) {
+                    // Debug: Log why painting isn't working
+                    console.log('Space pressed but not painting:', {
+                        isSpacePressed,
+                        isPaletteVisible: isPaletteVisible(),
+                        visibleCells: getVisibleGridCells(),
+                        paintingThreshold: PAINTING_THRESHOLD
+                    });
                 }
                 
                 // Swipe delete when right mouse is held down
-                if (isRightMouseDown && isPaintingEnabled && isPaletteVisible()) {
+                if (isRightMouseDown && isPaletteVisible()) {
                     const vc = getVisibleGridCells();
                     if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
                         paintCell(clampedX, clampedY, null);
