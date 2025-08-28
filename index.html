@@ -1595,51 +1595,14 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // Swipe paint when space is held down - ULTRA ROBUST
-                if (isSpacePressed) {
-                    console.log('Space pressed, painting enabled:', isPaintingEnabled, 'palette visible:', isPaletteVisible());
-                    try {
-                        // Check if painting is allowed
-                        if (isPaintingEnabled && isPaletteVisible()) {
-                            try {
-                                const vc = getVisibleGridCells();
-                                console.log('Visible cells:', vc);
-                                if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                                    console.log('Swipe painting cell:', clampedX, clampedY, selectedColor);
-                                    paintCell(clampedX, clampedY, selectedColor);
-                                }
-                            } catch (e) {
-                                // Fallback: paint anyway if we can't check visible cells
-                                console.log('Fallback swipe painting:', clampedX, clampedY);
-                                paintCell(clampedX, clampedY, selectedColor);
-                            }
-                        }
-                    } catch (e) {
-                        console.log('Swipe paint error:', e);
-                    }
+                // SIMPLE SWIPE PAINTING - Just paint when spacebar is held
+                if (isSpacePressed && selectedColor) {
+                    paintCell(clampedX, clampedY, selectedColor);
                 }
                 
-                // Swipe delete when right mouse is held down - ULTRA ROBUST
+                // SIMPLE SWIPE ERASING - Just erase when right mouse is held
                 if (isRightMouseDown) {
-                    console.log('Right mouse down, painting enabled:', isPaintingEnabled, 'palette visible:', isPaletteVisible());
-                    try {
-                        // Check if painting is allowed
-                        if (isPaintingEnabled && isPaletteVisible()) {
-                            try {
-                                const vc = getVisibleGridCells();
-                                if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                                    console.log('Swipe erasing cell:', clampedX, clampedY);
-                                    paintCell(clampedX, clampedY, null);
-                                }
-                            } catch (e) {
-                                // Fallback: erase anyway if we can't check visible cells
-                                console.log('Fallback swipe erasing:', clampedX, clampedY);
-                                paintCell(clampedX, clampedY, null);
-                            }
-                        }
-                    } catch (e) {
-                        console.log('Swipe erase error:', e);
-                    }
+                    paintCell(clampedX, clampedY, null);
                 }
                 
                 // ALWAYS update hover layer - NO GRID VISIBILITY CHECKS
