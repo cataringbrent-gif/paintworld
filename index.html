@@ -1481,6 +1481,24 @@
         const PAINTING_THRESHOLD = 1000; // Only allow painting when visible cells <= 1000x1000
         const MAX_CELLS = 10000; // Maximum number of cells that can be painted
         let currentHoveredCell = null;
+        // Hover throttling / viewport cache
+        let hoverRafId = null;
+        let pendingHoverPoint = null;
+        let cachedVisibleCells = null;
+        let viewportRafId = null;
+        let isMoving = false;
+
+        function scheduleViewportCacheUpdate() {
+            if (viewportRafId) return;
+            viewportRafId = requestAnimationFrame(() => {
+                viewportRafId = null;
+                cachedVisibleCells = getVisibleGridCells();
+                // Keep UI in sync using cached values
+                updateGridVisibility();
+                updatePaintedCellsVisibility();
+                updateZoomHintVisibility();
+            });
+        }
         let gridVisible = false;
         let isPaintingEnabled = false;
         let isPaintMode = false; // User must enable paint mode via paint button
@@ -1664,7 +1682,7 @@
 
         // Update grid visibility based on viewport
         function updateGridVisibility() {
-            const visibleCells = getVisibleGridCells();
+            const visibleCells = cachedVisibleCells || getVisibleGridCells();
             const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
             
             if (shouldShowGrid !== gridVisible) {
@@ -1779,57 +1797,63 @@
         // Handle mouse move for hover
         function handleMouseMove(e) {
             if (!gridVisible) return;
-            
-            const gridCoords = screenToGrid(e.point.x, e.point.y);
-            
-            // Get wrapped coordinates for display (0-3999 range)
-            const wrappedCoords = getWrappedCoordinates(gridCoords.x, gridCoords.y);
-            
-            // No bottom-left coordinate display
-            
-            // Check if painting is enabled (zoom level check)
-            checkPaintingEnabled();
-            
-            // Only highlight cells when zoomed in enough (visible area <= 4000 × 4000 cells)
-            const visibleCells = getVisibleGridCells();
-            const shouldHighlight = visibleCells.x <= 4000 && visibleCells.y <= 4000;
-            
-            if (shouldHighlight) {
-                // Update hover cell (still using full world coordinates for rendering)
-                if (currentHoveredCell?.x !== gridCoords.x || currentHoveredCell?.y !== gridCoords.y) {
-                    currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
-                    
-                    const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
-                    map.getSource('grid-hover').setData({
-                        type: 'FeatureCollection',
-                        features: [hoverCell]
-                    });
-                    
-                    // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
-                    if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
-                        const vc = getVisibleGridCells();
-                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                            paintCell(gridCoords.x, gridCoords.y, selectedColor);
+
+            // rAF-throttled hover updates to avoid flooding during zoom/move
+            pendingHoverPoint = { x: e.point.x, y: e.point.y };
+            if (!hoverRafId) {
+                hoverRafId = requestAnimationFrame(() => {
+                    const p = pendingHoverPoint;
+                    hoverRafId = null;
+                    if (!p) return;
+
+                    const gridCoords = screenToGrid(p.x, p.y);
+
+                    // Get wrapped coordinates for display (0-3999 range)
+                    const wrappedCoords = getWrappedCoordinates(gridCoords.x, gridCoords.y);
+
+                    // Check if painting is enabled (zoom level check)
+                    checkPaintingEnabled();
+
+                    // Only highlight cells when zoomed in enough using cached viewport cells
+                    const vc = cachedVisibleCells || getVisibleGridCells();
+                    const shouldHighlight = vc.x <= HOVER_THRESHOLD && vc.y <= HOVER_THRESHOLD;
+
+                    if (shouldHighlight) {
+                        // Update hover cell (still using full world coordinates for rendering)
+                        if (currentHoveredCell?.x !== gridCoords.x || currentHoveredCell?.y !== gridCoords.y) {
+                            currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
+
+                            const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
+                            map.getSource('grid-hover').setData({
+                                type: 'FeatureCollection',
+                                features: [hoverCell]
+                            });
+
+                            // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
+                            if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
+                                if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                                    paintCell(gridCoords.x, gridCoords.y, selectedColor);
+                                }
+                            }
+
+                            // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
+                            if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
+                                if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
+                                    paintCell(gridCoords.x, gridCoords.y, null);
+                                }
+                            }
+                        }
+                    } else {
+                        // Clear hover when zoomed out too far
+                        if (currentHoveredCell) {
+                            map.getSource('grid-hover').setData({
+                                type: 'FeatureCollection',
+                                features: []
+                            });
+                            currentHoveredCell = null;
                         }
                     }
-                    
-                    // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
-                    if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
-                        const vc = getVisibleGridCells();
-                        if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                            paintCell(gridCoords.x, gridCoords.y, null);
-                        }
-                    }
-                }
-            } else {
-                // Clear hover when zoomed out too far
-                if (currentHoveredCell) {
-                    map.getSource('grid-hover').setData({
-                        type: 'FeatureCollection',
-                        features: []
-                    });
-                    currentHoveredCell = null;
-                }
+                });
             }
         }
 
@@ -1993,6 +2017,7 @@
             updatePaintedCellsDisplay();
 
             // Initial grid update
+            cachedVisibleCells = getVisibleGridCells();
             updateGridVisibility();
             updateGrid();
             // Ensure painted layer visibility respects 4000x4000 threshold on load
@@ -2004,7 +2029,7 @@
         // Toggle painted layer visibility depending on visible grid cells
         function updatePaintedCellsVisibility() {
             if (!map.getLayer('painted-cells')) return;
-            const vc = getVisibleGridCells();
+            const vc = cachedVisibleCells || getVisibleGridCells();
             const visible = vc.x <= 4000 && vc.y <= 4000;
             const current = map.getLayoutProperty('painted-cells', 'visibility');
             const desired = visible ? 'visible' : 'none';
@@ -2017,7 +2042,7 @@
         function updateZoomHintVisibility() {
             const el = document.getElementById('zoomHint');
             if (!el) return;
-            const vc = getVisibleGridCells();
+            const vc = cachedVisibleCells || getVisibleGridCells();
             const tooMany = vc.x > 4000 || vc.y > 4000;
             el.style.display = tooMany ? 'block' : 'none';
         }
@@ -2037,12 +2062,10 @@
         }
 
         map.on('zoom', () => {
-            updateGridVisibility();
+            scheduleViewportCacheUpdate();
             updateGrid();
-            updatePaintedCellsVisibility();
-            updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
-            const vc = getVisibleGridCells();
+            const vc = cachedVisibleCells || getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
                 const now = Date.now();
                 if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
@@ -2053,22 +2076,17 @@
         });
 
         // Also update on move to reflect viewport changes without zoom change
-        map.on('move', () => {
-            updatePaintedCellsVisibility();
-            updateZoomHintVisibility();
+        map.on('movestart', () => { isMoving = true; });
+        map.on('move', () => { scheduleViewportCacheUpdate(); });
+        map.on('moveend', () => {
+            isMoving = false;
+            scheduleViewportCacheUpdate();
         });
 
-        // After interactions settle, re-evaluate to avoid threshold flicker
-        map.on('moveend', () => {
-            updatePaintedCellsVisibility();
-            updateZoomHintVisibility();
-        });
+        // After interactions settle, handled above in moveend
 
         // Handle window/map resize which affects visible cell count
-        map.on('resize', () => {
-            updatePaintedCellsVisibility();
-            updateZoomHintVisibility();
-        });
+        map.on('resize', () => { scheduleViewportCacheUpdate(); });
 
         // Wire up zoom hint button
         document.addEventListener('DOMContentLoaded', () => {
