@@ -1560,6 +1560,7 @@
         // INSTANT HIGHLIGHTING SYSTEM - Works immediately on page load
         let lastMouseX = 0;
         let lastMouseY = 0;
+        let lastPaintedCell = null; // Track last painted cell for interpolation
         
         function updateHighlight() {
             // Direct coordinate calculation that works even before map loads
@@ -1619,22 +1620,52 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // ULTRA-FAST SWIPE PAINTING - Instant visual updates
+                // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - No cell skipping
                 if (isSpacePressed && selectedColor) {
-                    // Skip duplicate cells for performance
-                    const cellKey = `${clampedX},${clampedY}`;
-                    const existingCell = paintedCells.get(cellKey);
-                    if (!existingCell || existingCell.color !== selectedColor) {
-                        paintCell(clampedX, clampedY, selectedColor);
+                    const currentCell = { x: clampedX, y: clampedY };
+                    
+                    if (lastPaintedCell) {
+                        // Paint all cells between last and current position
+                        const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                        for (const cell of interpolatedCells) {
+                            const cellKey = `${cell.x},${cell.y}`;
+                            const existingCell = paintedCells.get(cellKey);
+                            if (!existingCell || existingCell.color !== selectedColor) {
+                                paintCell(cell.x, cell.y, selectedColor);
+                            }
+                        }
+                    } else {
+                        // First paint - just paint current cell
+                        const cellKey = `${clampedX},${clampedY}`;
+                        const existingCell = paintedCells.get(cellKey);
+                        if (!existingCell || existingCell.color !== selectedColor) {
+                            paintCell(clampedX, clampedY, selectedColor);
+                        }
                     }
+                    lastPaintedCell = currentCell;
                 }
                 
-                // ULTRA-FAST SWIPE ERASING - Instant visual updates
+                // ULTRA-FAST SWIPE ERASING WITH INTERPOLATION - No cell skipping
                 if (isRightMouseDown) {
-                    const cellKey = `${clampedX},${clampedY}`;
-                    if (paintedCells.has(cellKey)) {
-                        paintCell(clampedX, clampedY, null);
+                    const currentCell = { x: clampedX, y: clampedY };
+                    
+                    if (lastPaintedCell) {
+                        // Erase all cells between last and current position
+                        const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                        for (const cell of interpolatedCells) {
+                            const cellKey = `${cell.x},${cell.y}`;
+                            if (paintedCells.has(cellKey)) {
+                                paintCell(cell.x, cell.y, null);
+                            }
+                        }
+                    } else {
+                        // First erase - just erase current cell
+                        const cellKey = `${clampedX},${clampedY}`;
+                        if (paintedCells.has(cellKey)) {
+                            paintCell(clampedX, clampedY, null);
+                        }
                     }
+                    lastPaintedCell = currentCell;
                 }
                 
                 // ALWAYS update hover layer - NO GRID VISIBILITY CHECKS
@@ -1653,6 +1684,37 @@
                 // Complete fallback - still track mouse position
                 currentHoveredCell = { x: 1000000, y: 1000000 }; // Center of grid as fallback
             }
+        }
+
+        // Bresenham's line algorithm - get all cells between two points
+        function getLineCells(x0, y0, x1, y1) {
+            const cells = [];
+            const dx = Math.abs(x1 - x0);
+            const dy = Math.abs(y1 - y0);
+            const sx = x0 < x1 ? 1 : -1;
+            const sy = y0 < y1 ? 1 : -1;
+            let err = dx - dy;
+            
+            let x = x0;
+            let y = y0;
+            
+            while (true) {
+                cells.push({ x, y });
+                
+                if (x === x1 && y === y1) break;
+                
+                const e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y += sy;
+                }
+            }
+            
+            return cells;
         }
 
         // Add direct DOM mousemove listener IMMEDIATELY - no waiting for map load
@@ -2030,6 +2092,7 @@
         function handleMouseDown(e) {
             if (e.originalEvent.button === 2) { // Right mouse button
                 isRightMouseDown = true;
+                lastPaintedCell = null; // Reset interpolation for new erase stroke
             }
         }
         
@@ -2037,6 +2100,7 @@
         function handleMouseUp(e) {
             if (e.originalEvent.button === 2) { // Right mouse button
                 isRightMouseDown = false;
+                lastPaintedCell = null; // Reset interpolation when stopping erase
             }
         }
 
@@ -2229,12 +2293,14 @@
             if (e.code === 'Space' && !isSpacePressed) {
                 e.preventDefault(); // Prevent page scrolling
                 isSpacePressed = true;
+                lastPaintedCell = null; // Reset interpolation for new paint stroke
             }
         });
 
         document.addEventListener('keyup', (e) => {
             if (e.code === 'Space') {
                 isSpacePressed = false;
+                lastPaintedCell = null; // Reset interpolation when stopping paint
             }
         });
 
