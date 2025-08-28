@@ -1776,71 +1776,40 @@
             });
         }
 
-        // Handle mouse move for hover
+        // Handle mouse move for hover - INSTANT HIGHLIGHTING
         function handleMouseMove(e) {
-            if (!gridVisible) return;
-            
             const gridCoords = screenToGrid(e.point.x, e.point.y);
             
-            // Get wrapped coordinates for display (0-3999 range)
-            const wrappedCoords = getWrappedCoordinates(gridCoords.x, gridCoords.y);
+            // Always update hover cell instantly - no conditions, no delays
+            currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
             
-            // No bottom-left coordinate display
+            const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
             
-            // Check if painting is enabled (zoom level check)
+            // INSTANT update - no try/catch, no conditions, just do it
+            if (map.getSource && map.getSource('grid-hover')) {
+                map.getSource('grid-hover').setData({
+                    type: 'FeatureCollection',
+                    features: [hoverCell]
+                });
+            }
+            
+            // Check conditions after highlighting for other features
+            if (!gridVisible) return;
             checkPaintingEnabled();
             
-            // Only highlight cells when zoomed in enough (visible area <= 4000 × 4000 cells)
             const visibleCells = getVisibleGridCells();
-            const shouldHighlight = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
-            if (shouldHighlight) {
-                // Update hover cell immediately
-                currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
-                
-                const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
-                
-                // Update grid hover immediately without requestAnimationFrame to avoid render blocking
-                try {
-                    if (map.getSource('grid-hover')) {
-                        map.getSource('grid-hover').setData({
-                            type: 'FeatureCollection',
-                            features: [hoverCell]
-                        });
-                    }
-                } catch (e) {
-                    // Ignore errors during map state changes
+            // Swipe paint when space is held down
+            if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
+                if (visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD) {
+                    paintCell(gridCoords.x, gridCoords.y, selectedColor);
                 }
-                
-                // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
-                if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
-                    const vc = getVisibleGridCells();
-                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                        paintCell(gridCoords.x, gridCoords.y, selectedColor);
-                    }
-                }
-                
-                // Swipe delete when right mouse is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
-                if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
-                    const vc = getVisibleGridCells();
-                    if (vc.x <= PAINTING_THRESHOLD && vc.y <= PAINTING_THRESHOLD) {
-                        paintCell(gridCoords.x, gridCoords.y, null);
-                    }
-                }
-            } else {
-                // Clear hover when zoomed out too far
-                if (currentHoveredCell) {
-                    try {
-                        if (map.getSource('grid-hover')) {
-                            map.getSource('grid-hover').setData({
-                                type: 'FeatureCollection',
-                                features: []
-                            });
-                        }
-                    } catch (e) {
-                        // Ignore errors during map state changes
-                    }
-                    currentHoveredCell = null;
+            }
+            
+            // Swipe delete when right mouse is held down
+            if (isRightMouseDown && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
+                if (visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD) {
+                    paintCell(gridCoords.x, gridCoords.y, null);
                 }
             }
         }
