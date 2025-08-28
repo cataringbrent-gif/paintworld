@@ -1412,26 +1412,14 @@
                       showNotification('You can only delete your own paint.');
                       return;
                   }
-                  
-                  // OPTIMISTIC UPDATE: Remove from UI immediately
-                  paintedCells.delete(cellKey);
-                  updateSingleCell(gridX, gridY, null);
-                  updateCellCounter();
-                  
-                  // Background database update
+                  // Delete row (RLS enforces ownership)
                   const { error } = await supabase
                     .from('paints')
                     .delete()
                     .eq('x', gridX)
                     .eq('y', gridY);
-                  if (error) { 
-                    console.error('Delete error', error);
-                    // Revert optimistic update on error
-                    paintedCells.set(cellKey, cell);
-                    updateSingleCell(gridX, gridY, cell.color);
-                    updateCellCounter();
-                    return;
-                  }
+                  if (error) { console.error('Delete error', error); return; }
+                  paintedCells.delete(cellKey);
               } else {
                   // Require charges for authenticated users
                   if (USER_ID) {
@@ -1452,75 +1440,35 @@
                     // Allow color change without spending a charge
                     spendCharge = false;
                   }
-                  
-                  // OPTIMISTIC UPDATE: Show paint immediately
-                  const newCell = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
-                  paintedCells.set(cellKey, newCell);
-                  updateSingleCell(gridX, gridY, color);
-                  updateCellCounter();
-                  
-                  // Update charges UI immediately if spending
-                  if (USER_ID && spendCharge) {
-                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                    updatePaintButtonUI();
-                  }
-                  
-                  // Background database update
                   const { error } = await supabase
                     .from('paints')
                     .upsert([{ x: gridX, y: gridY, color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR }], { onConflict: 'x,y' });
-                  if (error) { 
-                    console.error('Upsert error', error);
-                    // Revert optimistic updates on error
-                    if (cell) {
-                      paintedCells.set(cellKey, cell);
-                      updateSingleCell(gridX, gridY, cell.color);
-                    } else {
-                      paintedCells.delete(cellKey);
-                      updateSingleCell(gridX, gridY, null);
-                    }
-                    if (USER_ID && spendCharge) {
-                      USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                      lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                      updatePaintButtonUI();
-                    }
-                    updateCellCounter();
-                    return;
-                  }
-                  
-                  // Background charge persistence (don't await to avoid blocking)
+                  if (error) { console.error('Upsert error', error); return; }
+                  paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+                  // Spend a charge if signed-in
                   if (USER_ID && spendCharge) {
-                    supabase.from('user_paints').update({
+                    const prevCharges = USER_CHARGES;
+                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                    // Start cooldown only when charges drop below capacity; clear if still >= capacity
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                    updatePaintButtonUI();
+                    // Persist spend
+                    await supabase.from('user_paints').update({
                       charges: USER_CHARGES,
                       last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
                       capacity: USER_CAPACITY
-                    }).eq('user_id', USER_ID).catch(err => console.error('Charge update error', err));
+                    }).eq('user_id', USER_ID);
                   }
               }
+              updatePaintedCellsDisplay();
+              updateCellCounter();
             }
             const map = new maplibregl.Map({
                 container: 'map',
                 style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
                 center: [120.75754, 13.89790],
                 zoom: 7.3,
-                dragRotate: false,
-                // Performance optimizations
-                antialias: false,
-                preserveDrawingBuffer: false,
-                refreshExpiredTiles: false,
-                renderWorldCopies: false,
-                maxTileCacheSize: 50,
-                transformRequest: (url, resourceType) => {
-                    // Cache tiles aggressively
-                    if (resourceType === 'Tile') {
-                        return {
-                            url: url,
-                            headers: { 'Cache-Control': 'max-age=3600' }
-                        };
-                    }
-                    return { url: url };
-                }
+                dragRotate: false
             });
 
 
@@ -1781,31 +1729,6 @@
                     features: features
                 });
         }
-
-        // Optimized function to update a single cell without regenerating all cells
-        function updateSingleCell(gridX, gridY, color) {
-            if (!map.getSource('painted-cells')) return;
-            
-            const source = map.getSource('painted-cells');
-            const currentData = source._data || { type: 'FeatureCollection', features: [] };
-            const cellKey = `${gridX},${gridY}`;
-            
-            // Remove existing feature for this cell
-            currentData.features = currentData.features.filter(f => {
-                const fX = f.properties.gridX;
-                const fY = f.properties.gridY;
-                return !(fX === gridX && fY === gridY);
-            });
-            
-            // Add new feature if color is not null (not deleting)
-            if (color !== null) {
-                const cellFeature = generateHoverCell(gridX, gridY);
-                cellFeature.properties.color = color;
-                currentData.features.push(cellFeature);
-            }
-            
-            source.setData(currentData);
-        }
         
         function updateCellCounter() {
             // No number needed, just keep the button text as 'Paint'
@@ -1864,15 +1787,15 @@
             
             // No bottom-left coordinate display
             
-            // Check if painting is enabled (zoom level check) - immediate, no debounce
-            const visibleCells = getVisibleGridCells();
-            isPaintingEnabled = visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD;
+            // Check if painting is enabled (zoom level check)
+            checkPaintingEnabled();
             
             // Only highlight cells when zoomed in enough (visible area <= 4000 × 4000 cells)
+            const visibleCells = getVisibleGridCells();
             const shouldHighlight = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
             if (shouldHighlight) {
-                // Update hover cell immediately - no debounce for responsive hover
+                // Update hover cell (still using full world coordinates for rendering)
                 if (currentHoveredCell?.x !== gridCoords.x || currentHoveredCell?.y !== gridCoords.y) {
                     currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
                     
@@ -2113,33 +2036,11 @@
             map.easeTo({ zoom: targetZoom, duration: 800 });
         }
 
-        // Throttle expensive operations to improve performance
-        let updateTimeout = null;
-        let isUpdating = false;
-        
-        function throttledUpdate() {
-            if (isUpdating) return;
-            isUpdating = true;
-            requestAnimationFrame(() => {
-                updatePaintedCellsVisibility();
-                updateZoomHintVisibility();
-                isUpdating = false;
-            });
-        }
-        
-        function debouncedFullUpdate() {
-            if (updateTimeout) clearTimeout(updateTimeout);
-            updateTimeout = setTimeout(() => {
-                updateGridVisibility();
-                updateGrid();
-                updatePaintedCellsVisibility();
-                updateZoomHintVisibility();
-                // checkPaintingEnabled() is now handled immediately in handleMouseMove
-            }, 100);
-        }
-
         map.on('zoom', () => {
-            debouncedFullUpdate();
+            updateGridVisibility();
+            updateGrid();
+            updatePaintedCellsVisibility();
+            updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
@@ -2177,9 +2078,6 @@
             }
         });
 
-        map.on('move', throttledUpdate);
-        map.on('moveend', throttledUpdate);
-        map.on('resize', throttledUpdate);
         map.on('mousemove', handleMouseMove);
         map.on('mouseleave', handleMouseLeave);
         map.on('click', handleMouseClick);
