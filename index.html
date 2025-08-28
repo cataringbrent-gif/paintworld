@@ -1795,21 +1795,22 @@
             const shouldHighlight = visibleCells.x <= 4000 && visibleCells.y <= 4000;
             
             if (shouldHighlight) {
-                // Update hover cell immediately without checking if coordinates changed
-                // This ensures responsiveness during map movement
+                // Update hover cell immediately
                 currentHoveredCell = { x: gridCoords.x, y: gridCoords.y };
                 
                 const hoverCell = generateHoverCell(gridCoords.x, gridCoords.y);
                 
-                // Use requestAnimationFrame for smooth updates during map movement
-                requestAnimationFrame(() => {
+                // Update grid hover immediately without requestAnimationFrame to avoid render blocking
+                try {
                     if (map.getSource('grid-hover')) {
                         map.getSource('grid-hover').setData({
                             type: 'FeatureCollection',
                             features: [hoverCell]
                         });
                     }
-                });
+                } catch (e) {
+                    // Ignore errors during map state changes
+                }
                 
                 // Swipe paint when space is held down (only when palette is visible, a cell is highlighted, and <= 1000x1000 visible cells)
                 if (isSpacePressed && isPaintingEnabled && isPaletteVisible() && currentHoveredCell) {
@@ -1829,14 +1830,16 @@
             } else {
                 // Clear hover when zoomed out too far
                 if (currentHoveredCell) {
-                    requestAnimationFrame(() => {
+                    try {
                         if (map.getSource('grid-hover')) {
                             map.getSource('grid-hover').setData({
                                 type: 'FeatureCollection',
                                 features: []
                             });
                         }
-                    });
+                    } catch (e) {
+                        // Ignore errors during map state changes
+                    }
                     currentHoveredCell = null;
                 }
             }
@@ -1845,14 +1848,16 @@
         // Handle mouse leave
         function handleMouseLeave() {
             if (currentHoveredCell) {
-                requestAnimationFrame(() => {
+                try {
                     if (map.getSource('grid-hover')) {
                         map.getSource('grid-hover').setData({
                             type: 'FeatureCollection',
                             features: []
                         });
                     }
-                });
+                } catch (e) {
+                    // Ignore errors during map state changes
+                }
                 currentHoveredCell = null;
             }
             // Reset mouse button states when leaving map
