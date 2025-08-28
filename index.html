@@ -1399,7 +1399,7 @@
             // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
             let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
             let paintBatchTimeout = null;
-            const PAINT_BATCH_DELAY = 100; // ms - batch DB writes for ultra-responsive painting
+            const PAINT_BATCH_DELAY = 50; // ms - ultra-fast batching for maximum responsiveness
             
             function paintCell(gridX, gridY, color) {
               const cellKey = `${gridX},${gridY}`;
@@ -1416,13 +1416,27 @@
                       showNotification('You can only delete your own paint.');
                       return;
                   }
-                  // INSTANT local update
+                  // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.delete(cellKey);
-                  updatePaintedCellsDisplay();
-                  updateCellCounter();
                   
-                  // Queue DB delete
-                  paintQueue.set(cellKey, { gridX, gridY, color: null, timestamp: Date.now() });
+                  // RESTORE CHARGE when erasing own paint
+                  if (USER_ID && USER_CHARGES < USER_CAPACITY) {
+                    USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
+                    // Clear cooldown if we're back at capacity
+                    if (USER_CHARGES >= USER_CAPACITY) {
+                      lastRefillAt = null;
+                    }
+                    updatePaintButtonUI();
+                  }
+                  
+                  // IMMEDIATE visual update - no delays
+                  requestAnimationFrame(() => {
+                    updatePaintedCellsDisplay();
+                    updateCellCounter();
+                  });
+                  
+                  // Queue DB delete with charge restoration
+                  paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
                   schedulePaintBatch();
               } else {
                   // Require charges for authenticated users
@@ -1445,10 +1459,14 @@
                     spendCharge = false;
                   }
                   
-                  // INSTANT local update
+                  // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                  updatePaintedCellsDisplay();
-                  updateCellCounter();
+                  
+                  // IMMEDIATE visual update - no delays
+                  requestAnimationFrame(() => {
+                    updatePaintedCellsDisplay();
+                    updateCellCounter();
+                  });
                   
                   // Spend charge locally
                   if (USER_ID && spendCharge) {
@@ -1479,6 +1497,16 @@
               if (deletes.length > 0) {
                 for (const del of deletes) {
                   await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
+                }
+                
+                // Update charges for deletions that restore charges
+                const chargeRestores = deletes.filter(p => p.restoreCharge).length;
+                if (chargeRestores > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
                 }
               }
               
@@ -1536,34 +1564,51 @@
         // INSTANT HIGHLIGHTING SYSTEM - Works immediately on page load
         let lastMouseX = 0;
         let lastMouseY = 0;
+        let lastHoverUpdate = 0; // Throttle hover updates to prevent freezing during rapid zoom
         
         function updateHighlight() {
-            // Direct coordinate calculation that works even before map loads
+            // ULTRA-FAST coordinate calculation - NEVER blocks on map operations
             try {
                 let lngLat;
                 
-                // Try map.unproject first (fastest when map is loaded)
-                try {
-                    lngLat = map.unproject([lastMouseX, lastMouseY]);
-                } catch (e) {
-                    // Fallback: Manual coordinate calculation when map isn't ready
+                // Always try manual calculation first during rapid operations
+                const now = Date.now();
+                const useManualCalc = (now - lastHoverUpdate < 100) || isMapMoving;
+                
+                if (!useManualCalc) {
+                    // Try map.unproject only when map is stable
+                    try {
+                        if (map.isStyleLoaded() && !isMapMoving) {
+                            lngLat = map.unproject([lastMouseX, lastMouseY]);
+                        } else {
+                            throw new Error('Map not ready');
+                        }
+                    } catch (e) {
+                        useManualCalc = true;
+                    }
+                }
+                
+                if (useManualCalc || !lngLat) {
+                    // ALWAYS WORKING fallback calculation - completely independent
                     const mapContainer = map.getContainer();
                     const rect = mapContainer.getBoundingClientRect();
                     const mapWidth = rect.width;
                     const mapHeight = rect.height;
                     
-                    // Get current map center and zoom (or use defaults if not available)
-                    let center, zoom;
+                    // Get current map center and zoom with safe defaults
+                    let center = { lng: 0, lat: 0 };
+                    let zoom = 2;
+                    
                     try {
-                        center = map.getCenter();
-                        zoom = map.getZoom();
+                        if (map.isStyleLoaded()) {
+                            center = map.getCenter();
+                            zoom = map.getZoom();
+                        }
                     } catch (e) {
-                        // Use initial map state
-                        center = { lng: 0, lat: 0 };
-                        zoom = 2;
+                        // Use safe defaults - never block
                     }
                     
-                    // Calculate lng/lat from mouse position manually
+                    // Manual Web Mercator calculation - ALWAYS works
                     const scale = 256 * Math.pow(2, zoom);
                     const centerX = (center.lng + 180) / 360 * scale;
                     const centerY = (1 - Math.log(Math.tan(center.lat * Math.PI / 180) + 1 / Math.cos(center.lat * Math.PI / 180)) / Math.PI) / 2 * scale;
@@ -1595,27 +1640,39 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // SIMPLE SWIPE PAINTING - Just paint when spacebar is held
+                // ULTRA-FAST SWIPE PAINTING - Instant visual updates
                 if (isSpacePressed && selectedColor) {
-                    paintCell(clampedX, clampedY, selectedColor);
+                    // Skip duplicate cells for performance
+                    const cellKey = `${clampedX},${clampedY}`;
+                    const existingCell = paintedCells.get(cellKey);
+                    if (!existingCell || existingCell.color !== selectedColor) {
+                        paintCell(clampedX, clampedY, selectedColor);
+                    }
                 }
                 
-                // SIMPLE SWIPE ERASING - Just erase when right mouse is held
+                // ULTRA-FAST SWIPE ERASING - Instant visual updates
                 if (isRightMouseDown) {
-                    paintCell(clampedX, clampedY, null);
+                    const cellKey = `${clampedX},${clampedY}`;
+                    if (paintedCells.has(cellKey)) {
+                        paintCell(clampedX, clampedY, null);
+                    }
                 }
                 
-                // ALWAYS update hover layer - NO GRID VISIBILITY CHECKS
+                // ULTRA-ROBUST hover layer update - NEVER blocks on map state
                 try {
+                    // Skip hover updates during rapid operations to prevent freezing
+                    if (Date.now() - lastHoverUpdate < 16) return; // Max 60fps hover updates
+                    lastHoverUpdate = Date.now();
+                    
                     const hoverCell = generateHoverCell(clampedX, clampedY);
-                    if (map.getSource && map.getSource('grid-hover')) {
+                    if (map.getSource && map.getSource('grid-hover') && map.isStyleLoaded()) {
                         map.getSource('grid-hover').setData({
                             type: 'FeatureCollection',
                             features: [hoverCell]
                         });
                     }
                 } catch (e) {
-                    // Silent fail - highlighting continues working
+                    // Complete silence - never interrupt coordinate calculation
                 }
             } catch (e) {
                 // Complete fallback - still track mouse position
