@@ -1620,19 +1620,45 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - No cell skipping
+                // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - Instant visual updates
                 if (isSpacePressed && selectedColor) {
                     const currentCell = { x: clampedX, y: clampedY };
                     
                     if (lastPaintedCell) {
                         // Paint all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                        
+                        // INSTANT visual updates - no database calls in loop
+                        let hasNewPaints = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
                             if (!existingCell || existingCell.color !== selectedColor) {
-                                paintCell(cell.x, cell.y, selectedColor);
+                                // INSTANT local update
+                                paintedCells.set(cellKey, { 
+                                    color: selectedColor, 
+                                    owner: USER_ID, 
+                                    owner_name: USER_NAME, 
+                                    owner_avatar: USER_AVATAR 
+                                });
+                                
+                                // Queue for database (no await)
+                                paintQueue.set(cellKey, { 
+                                    gridX: cell.x, 
+                                    gridY: cell.y, 
+                                    color: selectedColor, 
+                                    spendCharge: true, 
+                                    timestamp: Date.now() 
+                                });
+                                hasNewPaints = true;
                             }
+                        }
+                        
+                        // Single visual update for all cells
+                        if (hasNewPaints) {
+                            updatePaintedCellsDisplay();
+                            updateCellCounter();
+                            schedulePaintBatch();
                         }
                     } else {
                         // First paint - just paint current cell
@@ -1645,18 +1671,49 @@
                     lastPaintedCell = currentCell;
                 }
                 
-                // ULTRA-FAST SWIPE ERASING WITH INTERPOLATION - No cell skipping
+                // ULTRA-FAST SWIPE ERASING WITH INTERPOLATION - Instant visual updates
                 if (isRightMouseDown) {
                     const currentCell = { x: clampedX, y: clampedY };
                     
                     if (lastPaintedCell) {
                         // Erase all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                        
+                        // INSTANT visual updates - no database calls in loop
+                        let hasNewErases = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
-                            if (paintedCells.has(cellKey)) {
-                                paintCell(cell.x, cell.y, null);
+                            const existingCell = paintedCells.get(cellKey);
+                            if (existingCell && existingCell.owner === USER_ID) {
+                                // INSTANT local update
+                                paintedCells.delete(cellKey);
+                                
+                                // Restore charge immediately
+                                if (USER_CHARGES < USER_CAPACITY) {
+                                    USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
+                                    if (USER_CHARGES === USER_CAPACITY) {
+                                        lastRefillAt = null;
+                                    }
+                                }
+                                
+                                // Queue for database (no await)
+                                paintQueue.set(cellKey, { 
+                                    gridX: cell.x, 
+                                    gridY: cell.y, 
+                                    color: null, 
+                                    spendCharge: false, 
+                                    timestamp: Date.now() 
+                                });
+                                hasNewErases = true;
                             }
+                        }
+                        
+                        // Single visual update for all cells
+                        if (hasNewErases) {
+                            updatePaintedCellsDisplay();
+                            updateCellCounter();
+                            updateChargesDisplay();
+                            schedulePaintBatch();
                         }
                     } else {
                         // First erase - just erase current cell
