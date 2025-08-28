@@ -1415,7 +1415,7 @@
                   
                   // OPTIMISTIC UPDATE: Remove from UI immediately
                   paintedCells.delete(cellKey);
-                  updatePaintedCellsDisplay();
+                  updateSingleCell(gridX, gridY, null);
                   updateCellCounter();
                   
                   // Background database update
@@ -1428,7 +1428,7 @@
                     console.error('Delete error', error);
                     // Revert optimistic update on error
                     paintedCells.set(cellKey, cell);
-                    updatePaintedCellsDisplay();
+                    updateSingleCell(gridX, gridY, cell.color);
                     updateCellCounter();
                     return;
                   }
@@ -1456,7 +1456,7 @@
                   // OPTIMISTIC UPDATE: Show paint immediately
                   const newCell = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
                   paintedCells.set(cellKey, newCell);
-                  updatePaintedCellsDisplay();
+                  updateSingleCell(gridX, gridY, color);
                   updateCellCounter();
                   
                   // Update charges UI immediately if spending
@@ -1475,15 +1475,16 @@
                     // Revert optimistic updates on error
                     if (cell) {
                       paintedCells.set(cellKey, cell);
+                      updateSingleCell(gridX, gridY, cell.color);
                     } else {
                       paintedCells.delete(cellKey);
+                      updateSingleCell(gridX, gridY, null);
                     }
                     if (USER_ID && spendCharge) {
                       USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
                       lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
                       updatePaintButtonUI();
                     }
-                    updatePaintedCellsDisplay();
                     updateCellCounter();
                     return;
                   }
@@ -1763,6 +1764,31 @@
                     type: 'FeatureCollection',
                     features: features
                 });
+        }
+
+        // Optimized function to update a single cell without regenerating all cells
+        function updateSingleCell(gridX, gridY, color) {
+            if (!map.getSource('painted-cells')) return;
+            
+            const source = map.getSource('painted-cells');
+            const currentData = source._data || { type: 'FeatureCollection', features: [] };
+            const cellKey = `${gridX},${gridY}`;
+            
+            // Remove existing feature for this cell
+            currentData.features = currentData.features.filter(f => {
+                const fX = f.properties.gridX;
+                const fY = f.properties.gridY;
+                return !(fX === gridX && fY === gridY);
+            });
+            
+            // Add new feature if color is not null (not deleting)
+            if (color !== null) {
+                const cellFeature = generateHoverCell(gridX, gridY);
+                cellFeature.properties.color = color;
+                currentData.features.push(cellFeature);
+            }
+            
+            source.setData(currentData);
         }
         
         function updateCellCounter() {
