@@ -22,6 +22,18 @@
             padding: 0;
             box-sizing: border-box;
         }
+        
+        #paint-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            transform: translateZ(0);
+            will-change: transform;
+        }
         /* Blue rounded rectangle in top right */
         .blue-rectangle {
             position: fixed;
@@ -1538,7 +1550,22 @@
                 }
               }
             }
-            const map = new maplibregl.Map({
+            // Create paint canvas overlay
+const paintCanvas = document.createElement('canvas');
+const paintCtx = paintCanvas.getContext('2d');
+paintCanvas.id = 'paint-canvas';
+paintCanvas.style.position = 'absolute';
+paintCanvas.style.top = '0';
+paintCanvas.style.left = '0';
+paintCanvas.style.width = '100%';
+paintCanvas.style.height = '100%';
+paintCanvas.style.pointerEvents = 'none';
+paintCanvas.style.zIndex = '10'; // Above map, below hover overlay
+
+// Add canvas to map container
+document.getElementById('map').appendChild(paintCanvas);
+
+const map = new maplibregl.Map({
                 container: 'map',
                 style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
                 center: [120.75754, 13.89790],
@@ -2136,84 +2163,53 @@
                 return cell ? cell.color : null;
         }
         
-        // Direct canvas rendering for painted cells
-        let paintCanvas = null;
-        let paintCtx = null;
-        let canvasInitialized = false;
+        // High-performance batched update system
+        let updatePaintedCellsRAF = null;
+        let pendingCellUpdates = new Set();
         
-        function initPaintCanvas() {
-            if (canvasInitialized) return;
-            
-            // Create a canvas overlay for direct rendering
-            paintCanvas = document.createElement('canvas');
-            paintCanvas.id = 'paint-canvas';
-            paintCanvas.style.position = 'absolute';
-            paintCanvas.style.top = '0';
-            paintCanvas.style.left = '0';
-            paintCanvas.style.width = '100%';
-            paintCanvas.style.height = '100%';
-            paintCanvas.style.pointerEvents = 'none';
-            document.getElementById('map').appendChild(paintCanvas);
-            
-            // Set canvas size to match map container
-            const container = map.getContainer();
-            paintCanvas.width = container.offsetWidth;
-            paintCanvas.height = container.offsetHeight;
-            
-            // Get 2D context with alpha for transparency
-            paintCtx = paintCanvas.getContext('2d', { alpha: true });
-            
-            // Handle window resize
-            const resizeObserver = new ResizeObserver(() => {
-                const container = map.getContainer();
-                paintCanvas.width = container.offsetWidth;
-                paintCanvas.height = container.offsetHeight;
-                redrawAllPaintedCells();
-            });
-            resizeObserver.observe(map.getContainer());
-            
-            // Redraw when map moves
-            map.on('moveend', redrawAllPaintedCells);
-            
-            canvasInitialized = true;
-        }
-        
-        function redrawAllPaintedCells() {
-            if (!paintCtx) return;
-            
-            // Clear the canvas
+        function updatePaintedCellsDisplay() {
+    if (!paintCanvas || !paintCtx) return;
+    
+    // Use RAF for smooth 60fps updates
+    if (!updatePaintedCellsRAF) {
+        updatePaintedCellsRAF = requestAnimationFrame(() => {
+            // Clear canvas
             paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
             
-            // Redraw all painted cells
+            // Get current viewport bounds
+            const bounds = map.getBounds();
+            const zoom = map.getZoom();
+            
+            // Calculate cell size in pixels at current zoom
+            const cellSize = Math.pow(2, zoom - 1);
+            
+            // Only render visible cells for better performance
             paintedCells.forEach((cell, cellKey) => {
                 const [x, y] = cellKey.split(',').map(Number);
-                drawCellOnCanvas(x, y, cell.color);
+                
+                // Skip cells outside current viewport
+                if (x < bounds.getWest() || x > bounds.getEast() || 
+                    y < bounds.getSouth() || y > bounds.getNorth()) {
+                    return;
+                }
+                
+                // Convert coordinates to pixel position
+                const pos = map.project([x, y]);
+                
+                // Draw cell
+                paintCtx.fillStyle = cell.color;
+                paintCtx.fillRect(
+                    pos.x - cellSize/2, 
+                    pos.y - cellSize/2, 
+                    cellSize, 
+                    cellSize
+                );
             });
-        }
-        
-        function drawCellOnCanvas(gridX, gridY, color) {
-            if (!paintCtx) return;
             
-            // Get cell bounds in screen coordinates
-            const cellSize = getGridCellSize();
-            const [minLng, minLat] = gridToGeo(gridX, gridY);
-            const [maxLng, maxLat] = gridToGeo(gridX + 1, gridY + 1);
-            
-            // Convert to screen coordinates
-            const sw = map.project([minLng, minLat]);
-            const ne = map.project([maxLng, maxLat]);
-            
-            // Draw the cell
-            paintCtx.fillStyle = color;
-            paintCtx.fillRect(sw.x, ne.y, ne.x - sw.x, sw.y - ne.y);
-        }
-        
-        // Keep the existing function for backward compatibility
-        function updatePaintedCellsDisplay() {
-            if (!canvasInitialized) {
-                initPaintCanvas();
-            }
-            redrawAllPaintedCells();
+            updatePaintedCellsRAF = null;
+            pendingCellUpdates.clear();
+        });
+    }
         }
         
         function updateCellCounter() {
@@ -2281,12 +2277,10 @@
         
         // Handle mouse clicks for painting
         function handleMouseClick(e) {
+            // Determine grid coordinates from current hover or click location
             const gridCoords = currentHoveredCell || screenToGrid(e.point.x, e.point.y);
-            if (!gridCoords) return;
-            
-            const wrapped = getWrappedCoordinates(gridCoords.x, gridCoords.y);
-            
-            // If palette is not visible, just show pixel info
+
+            // If palette is not visible, show pixel info box and do nothing else
             if (!isPaletteVisible()) {
                 // Only allow selection when viewport shows <= 4000 x 4000 cells (same as hover highlight)
                 const visibleCells = getVisibleGridCells();
@@ -2294,66 +2288,42 @@
                 if (!canSelect) {
                     const pixelInfo = document.getElementById('pixelInfo');
                     if (pixelInfo) pixelInfo.style.display = 'none';
+                    // Show notice to zoom in
                     showNotification('Zoom in to select a pixel');
                     return;
                 }
-                
-                // Show pixel info and return
+                const wrapped = getWrappedCoordinates(gridCoords.x, gridCoords.y);
+                // Pass both world and display coordinates so we can look up owner correctly
                 showPixelInfo(gridCoords.x, gridCoords.y, wrapped.x, wrapped.y);
                 return;
             }
-            
-            // Check if we're in a valid painting zoom level
-            const visibleCells = getVisibleGridCells();
-            if (visibleCells.x > 1000 || visibleCells.y > 1000) {
-                // If too zoomed out, auto-zoom to a reasonable level
-                autoZoomToCell(gridCoords.x, gridCoords.y, 100);
-                return;
-            }
-            
-            // If we get here, we're in painting mode and zoomed in enough
-            if (!checkPaintingEnabled()) {
+
+            // Palette is visible; enforce painting rules based on visible cells
+            const vc = getVisibleGridCells();
+
+            // > 4000 x 4000: block and notify
+            if (vc.x > 4000 || vc.y > 4000) {
                 showNotification('Zoom in to paint');
                 return;
             }
-            
-            const gridX = Math.floor(gridCoords.x);
-            const gridY = Math.floor(gridCoords.y);
-            
-            // Get the selected color from the palette
-            const selectedColor = document.querySelector('.color-option.selected');
-            if (!selectedColor) {
-                showNotification('Please select a color first');
+
+            // Between 1000 and 4000: auto-zoom to ~100 x 100 at the target cell, do not paint yet
+            if (vc.x > 1000 || vc.y > 1000) {
+                autoZoomToCell(gridCoords.x, gridCoords.y, 100);
                 return;
             }
-            
-            const color = selectedColor.dataset.color;
-            
-            // Get current cell state
-            const cellKey = `${gridX},${gridY}`;
-            const currentCell = paintedCells.get(cellKey);
-            
-            // Skip if no change
-            if (currentCell && currentCell.color === color) {
-                return;
+
+            // Only allow painting if a cell is highlighted (hover active)
+            if (!currentHoveredCell) return;
+
+            if (e.originalEvent.button === 0) { // Left click - paint
+                paintCell(gridCoords.x, gridCoords.y, selectedColor);
+            } else if (e.originalEvent.button === 2) { // Right click - delete
+                paintCell(gridCoords.x, gridCoords.y, null);
             }
-            
-            // Update the cell with immediate visual feedback
-            paintCell(gridX, gridY, color);
-            
-            // Immediate visual feedback on canvas
-            if (paintCtx) {
-                if (color === null) {
-                    // If erasing, we need to redraw everything to handle transparency
-                    redrawAllPaintedCells();
-                } else {
-                    // Draw just this cell
-                    drawCellOnCanvas(gridX, gridY, color);
-                }
-            }
-            
-            // Remember last selected cell
-            lastSelectedCell = { x: gridX, y: gridY };
+
+            // Remember last selected cell (no extra auto-zoom here; painting allowed at <= 2000)
+            lastSelectedCell = { x: gridCoords.x, y: gridCoords.y };
         }
         
         // Prevent context menu on right click
@@ -2381,8 +2351,6 @@
         map.on('load', () => {
             console.log('Map loaded successfully');
             initializeMapLayers();
-            // Initialize the paint canvas after map is loaded
-            initPaintCanvas();
         });
         
         function initializeMapLayers() {
@@ -2516,7 +2484,7 @@
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
-            updatePaintedCellsVisibility();
+            updatePaintedCellsDisplay(); // Update paint canvas on zoom
             updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
