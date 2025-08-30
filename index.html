@@ -22,18 +22,6 @@
             padding: 0;
             box-sizing: border-box;
         }
-        
-        #paint-canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 10;
-            transform: translateZ(0);
-            will-change: transform;
-        }
         /* Blue rounded rectangle in top right */
         .blue-rectangle {
             position: fixed;
@@ -1550,22 +1538,7 @@
                 }
               }
             }
-            // Create paint canvas overlay
-const paintCanvas = document.createElement('canvas');
-const paintCtx = paintCanvas.getContext('2d');
-paintCanvas.id = 'paint-canvas';
-paintCanvas.style.position = 'absolute';
-paintCanvas.style.top = '0';
-paintCanvas.style.left = '0';
-paintCanvas.style.width = '100%';
-paintCanvas.style.height = '100%';
-paintCanvas.style.pointerEvents = 'none';
-paintCanvas.style.zIndex = '10'; // Above map, below hover overlay
-
-// Add canvas to map container
-document.getElementById('map').appendChild(paintCanvas);
-
-const map = new maplibregl.Map({
+            const map = new maplibregl.Map({
                 container: 'map',
                 style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
                 center: [120.75754, 13.89790],
@@ -2168,48 +2141,30 @@ const map = new maplibregl.Map({
         let pendingCellUpdates = new Set();
         
         function updatePaintedCellsDisplay() {
-    if (!paintCanvas || !paintCtx) return;
-    
-    // Use RAF for smooth 60fps updates
-    if (!updatePaintedCellsRAF) {
-        updatePaintedCellsRAF = requestAnimationFrame(() => {
-            // Clear canvas
-            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
-            
-            // Get current viewport bounds
-            const bounds = map.getBounds();
-            const zoom = map.getZoom();
-            
-            // Calculate cell size in pixels at current zoom
-            const cellSize = Math.pow(2, zoom - 1);
-            
-            // Only render visible cells for better performance
-            paintedCells.forEach((cell, cellKey) => {
-                const [x, y] = cellKey.split(',').map(Number);
+                if (!map.getSource('painted-cells')) return;
                 
-                // Skip cells outside current viewport
-                if (x < bounds.getWest() || x > bounds.getEast() || 
-                    y < bounds.getSouth() || y > bounds.getNorth()) {
-                    return;
+                // Use RAF for smooth 60fps updates
+                if (!updatePaintedCellsRAF) {
+                    updatePaintedCellsRAF = requestAnimationFrame(() => {
+                        // Batch process all pending updates
+                        const features = [];
+                        paintedCells.forEach((cell, cellKey) => {
+                            const [x, y] = cellKey.split(',').map(Number);
+                            const cellFeature = generateHoverCell(x, y);
+                            cellFeature.properties.color = cell.color;
+                            features.push(cellFeature);
+                        });
+                        
+                        // Single efficient update
+                        map.getSource('painted-cells').setData({
+                            type: 'FeatureCollection',
+                            features: features
+                        });
+                        
+                        updatePaintedCellsRAF = null;
+                        pendingCellUpdates.clear();
+                    });
                 }
-                
-                // Convert coordinates to pixel position
-                const pos = map.project([x, y]);
-                
-                // Draw cell
-                paintCtx.fillStyle = cell.color;
-                paintCtx.fillRect(
-                    pos.x - cellSize/2, 
-                    pos.y - cellSize/2, 
-                    cellSize, 
-                    cellSize
-                );
-            });
-            
-            updatePaintedCellsRAF = null;
-            pendingCellUpdates.clear();
-        });
-    }
         }
         
         function updateCellCounter() {
@@ -2484,7 +2439,7 @@ const map = new maplibregl.Map({
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
-            updatePaintedCellsDisplay(); // Update paint canvas on zoom
+            updatePaintedCellsVisibility();
             updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
