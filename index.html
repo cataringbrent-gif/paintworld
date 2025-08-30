@@ -2213,7 +2213,7 @@
                     element.style.position = 'absolute';
                     element.style.pointerEvents = 'none';
                     element.style.backgroundColor = cell.color;
-                    element.style.border = '1px solid rgba(0,0,0,0.1)';
+                    element.style.border = 'none';
                     paintOverlay.appendChild(element);
                     paintOverlayElements.set(cellKey, element);
                 }
@@ -2493,7 +2493,10 @@
             if (paintOverlay && paintOverlayElements.size > 0) {
                 updatePaintOverlay();
             }
+            updatePaintedCellsVisibility();
         });
+
+        // Toggle painted layer visibility depending on visible grid cells
         function updatePaintedCellsVisibility() {
             if (!map.getLayer('painted-cells')) return;
             const vc = getVisibleGridCells();
@@ -2502,6 +2505,15 @@
             const desired = visible ? 'visible' : 'none';
             if (current !== desired) {
                 map.setLayoutProperty('painted-cells', 'visibility', desired);
+            }
+            
+            // Also control HTML paint overlay visibility
+            updatePaintOverlayVisibility(visible);
+        }
+        
+        function updatePaintOverlayVisibility(visible) {
+            if (paintOverlay) {
+                paintOverlay.style.display = visible ? 'block' : 'none';
             }
         }
 
