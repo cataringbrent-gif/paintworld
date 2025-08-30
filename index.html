@@ -2212,16 +2212,69 @@
         }
 
         function updateAllPaintedCellOverlays() {
-            // Update all overlays when map moves/zooms
+            // Check if viewport exceeds 4000x4000 cells - hide all overlays when zoomed out too far
+            try {
+                const visibleCells = getVisibleGridCells();
+                const totalVisibleCells = visibleCells.x * visibleCells.y;
+                const shouldShowOverlays = totalVisibleCells <= HOVER_THRESHOLD * HOVER_THRESHOLD;
+
+                if (!shouldShowOverlays) {
+                    // Hide all painted cell overlays when zoomed out beyond threshold
+                    paintedCellOverlays.forEach((overlay) => {
+                        overlay.style.display = 'none';
+                    });
+                    return;
+                }
+            } catch (e) {
+                // If we can't calculate, assume we should show overlays
+            }
+
+            // PERFORMANCE OPTIMIZATION: Only update overlays visible in current viewport
+            const bounds = map.getBounds();
+
+            // Convert bounds to EPSG:3857 (Web Mercator)
+            const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
+            const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
+
+            // Convert to normalized grid coordinates (0 to 1,999,999)
+            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
+            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
+            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
+
+            // Add some padding to viewport to handle edge cases
+            const padding = 100; // cells
+            const minX = Math.max(0, startGridX - padding);
+            const maxX = Math.min(1999999, endGridX + padding);
+            const minY = Math.max(0, startGridY - padding);
+            const maxY = Math.min(1999999, endGridY + padding);
+
+            // Only update overlays within the viewport bounds
+            let updatedCount = 0;
             paintedCellOverlays.forEach((overlay, cellKey) => {
                 const [gridX, gridY] = cellKey.split(',').map(Number);
+
+                // Skip if outside viewport bounds
+                if (gridX < minX || gridX > maxX || gridY < minY || gridY > maxY) {
+                    // Hide overlays outside viewport for performance
+                    overlay.style.display = 'none';
+                    return;
+                }
+
                 const cell = paintedCells.get(cellKey);
                 if (cell) {
+                    // Show overlay and update position
+                    overlay.style.display = 'block';
                     createPaintedCellOverlay(gridX, gridY, cell.color);
+                    updatedCount++;
                 } else {
+                    // Remove overlay if cell no longer exists
                     removePaintedCellOverlay(gridX, gridY);
                 }
             });
+
+            // Performance: Log only if there are many updates (optional debug)
+            // console.log(`Updated ${updatedCount} painted cell overlays (${paintedCellOverlays.size} total)`);
         }
         
         function updateCellCounter() {
@@ -2273,6 +2326,18 @@
         // Performance optimization variables
         let mouseMoveTimeout = null;
         let isMapMoving = false;
+        let overlayUpdateTimeout = null; // Throttle overlay updates
+        const OVERLAY_UPDATE_THROTTLE_MS = 100; // Update overlays at most every 100ms
+
+        // Throttled overlay update function
+        function throttledUpdateOverlays() {
+            if (overlayUpdateTimeout) return; // Already scheduled
+
+            overlayUpdateTimeout = setTimeout(() => {
+                updateAllPaintedCellOverlays();
+                overlayUpdateTimeout = null;
+            }, OVERLAY_UPDATE_THROTTLE_MS);
+        }
         
         // OLD MOUSE HANDLER REMOVED - Using instant highlighting system instead
 
@@ -2526,8 +2591,8 @@
             if (currentHoveredCell) {
                 updateHtmlHighlight(currentHoveredCell.x, currentHoveredCell.y);
             }
-            // Update all painted cell overlays when map moves
-            updateAllPaintedCellOverlays();
+            // Throttled update of painted cell overlays during map movement
+            throttledUpdateOverlays();
         });
 
         // After interactions settle, re-evaluate to avoid threshold flicker
@@ -2535,14 +2600,14 @@
             isMapMoving = false;
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
-            // Update all painted cell overlays when map movement ends
-            updateAllPaintedCellOverlays();
+            // Ensure final overlay positions after movement ends
+            throttledUpdateOverlays();
         });
 
         map.on('zoomend', () => {
             isMapMoving = false;
-            // Update all painted cell overlays when zoom ends
-            updateAllPaintedCellOverlays();
+            // Ensure final overlay positions after zoom ends
+            throttledUpdateOverlays();
         });
 
         // Handle window/map resize which affects visible cell count
