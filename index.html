@@ -1431,6 +1431,9 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.delete(cellKey);
                   
+                  // INSTANT visual overlay removal
+                  removePaintOverlay(gridX, gridY);
+                  
                   // RESTORE CHARGE when erasing own paint
                   if (USER_ID && USER_CHARGES < USER_CAPACITY) {
                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
@@ -1440,9 +1443,6 @@
                     }
                     updatePaintButtonUI();
                   }
-                  
-                  // INSTANT visual update - bypass RAF for immediate response
-                  updatePaintedCellsDisplayImmediate();
                   updateCellCounter();
                   
                   // Queue DB delete with charge restoration
@@ -1472,8 +1472,8 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // INSTANT visual update - bypass RAF for immediate response
-                  updatePaintedCellsDisplayImmediate();
+                  // INSTANT visual overlay creation
+                  createPaintOverlay(gridX, gridY, color);
                   updateCellCounter();
                   
                   // Spend charge locally
@@ -1641,7 +1641,7 @@
                         // Paint all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
                         
-                        // INSTANT visual updates - no database calls in loop
+                        // INSTANT visual updates - create overlay for each cell immediately
                         let hasNewPaints = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
@@ -1655,6 +1655,9 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
+                                // INSTANT visual overlay - create immediately
+                                createPaintOverlay(cell.x, cell.y, selectedColor);
+                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1667,9 +1670,8 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // Background updates
                         if (hasNewPaints) {
-                            updatePaintedCellsDisplayImmediate();
                             updateCellCounter();
                             schedulePaintBatch();
                         }
@@ -1692,7 +1694,7 @@
                         // Erase all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
                         
-                        // INSTANT visual updates - no database calls in loop
+                        // INSTANT visual updates - remove overlay for each cell immediately
                         let hasNewErases = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
@@ -1701,10 +1703,13 @@
                                 // INSTANT local update
                                 paintedCells.delete(cellKey);
                                 
+                                // INSTANT visual overlay removal
+                                removePaintOverlay(cell.x, cell.y);
+                                
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
                                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                                    if (USER_CHARGES === USER_CAPACITY) {
+                                    if (USER_CHARGES >= USER_CAPACITY) {
                                         lastRefillAt = null;
                                     }
                                 }
@@ -2162,46 +2167,20 @@
                     overlay.style.willChange = 'transform,width,height';
                     overlay.style.transform = 'translateZ(0)';
                     overlay.style.backfaceVisibility = 'hidden';
-                    overlay.style.perspective = '1000px';
-                    
-                    // Create solid color square as background image - same technique as hover highlighting
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 100;
-                    canvas.height = 100;
-                    const ctx = canvas.getContext('2d');
-                    
-                    overlay.style.backgroundSize = '100% 100%';
-                    overlay.style.backgroundRepeat = 'no-repeat';
-                    overlay.style.backgroundPosition = 'center';
-                    
                     container.appendChild(overlay);
                     paintOverlays.set(cellKey, overlay);
                 }
                 
-                // Update color instantly using background image technique
-                const canvas = document.createElement('canvas');
-                canvas.width = 100;
-                canvas.height = 100;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = color;
-                ctx.fillRect(0, 0, 100, 100);
-                
-                const dataUri = canvas.toDataURL();
-                overlay.style.backgroundImage = `url("${dataUri}")`;
+                // Set color and position instantly
+                overlay.style.backgroundColor = color;
                 overlay.style.display = 'block';
                 
                 // Position overlay exactly like hover highlighting
                 updatePaintOverlayPosition(overlay, gridX, gridY);
                 
             } catch (e) {
-                // Fallback to simple background color
-                const container = map.getContainer();
-                let overlay = paintOverlays.get(cellKey);
-                if (overlay) {
-                    overlay.style.backgroundColor = color;
-                    overlay.style.display = 'block';
-                    updatePaintOverlayPosition(overlay, gridX, gridY);
-                }
+                // Fallback to map update
+                updatePaintedCellsDisplayImmediate();
             }
         }
         
@@ -2246,21 +2225,43 @@
         
         // IMMEDIATE update for painting - true instant like hover highlighting
         function updatePaintedCellsDisplayImmediate() {
-                // INSTANT overlay updates - same responsiveness as hover highlighting
+                // First update instant overlays
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
                     createPaintOverlay(x, y, cell.color);
                 });
                 
-                // Remove overlays for deleted cells instantly
+                // Remove overlays for deleted cells
                 paintOverlays.forEach((overlay, cellKey) => {
                     if (!paintedCells.has(cellKey)) {
                         removePaintOverlay(...cellKey.split(',').map(Number));
                     }
                 });
                 
-                // Skip map source updates entirely for instant response
-                // Map source will be updated in background later
+                // Also update map source (but this is secondary)
+                if (!map.getSource('painted-cells')) return;
+                
+                // Cancel any pending batched update
+                if (updatePaintedCellsRAF) {
+                    cancelAnimationFrame(updatePaintedCellsRAF);
+                    updatePaintedCellsRAF = null;
+                }
+                
+                // Background map update
+                setTimeout(() => {
+                    const features = [];
+                    paintedCells.forEach((cell, cellKey) => {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        const cellFeature = generateHoverCell(x, y);
+                        cellFeature.properties.color = cell.color;
+                        features.push(cellFeature);
+                    });
+                    
+                    map.getSource('painted-cells').setData({
+                        type: 'FeatureCollection',
+                        features: features
+                    });
+                }, 0);
         }
         
         // Batched update for non-critical updates
