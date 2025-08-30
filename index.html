@@ -1641,8 +1641,7 @@
                         // Paint all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
                         
-                        // INSTANT visual updates - no database calls in loop
-                        let hasNewPaints = false;
+                        // INSTANT visual updates - paint each cell immediately like hover
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
@@ -1655,6 +1654,9 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
+                                // INSTANT visual update - same speed as hover highlight
+                                updatePaintedCellsDisplay();
+                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1663,17 +1665,9 @@
                                     spendCharge: true, 
                                     timestamp: Date.now() 
                                 });
-                                hasNewPaints = true;
                             }
                         }
-                        
-                        // Single visual update for all cells
-                        if (hasNewPaints) {
-                            lastPaintedCellsSize = -1; // Force cache refresh for new paints
-                            updatePaintedCellsDisplay();
-                            updateCellCounter();
-                            schedulePaintBatch();
-                        }
+                        schedulePaintBatch();
                     } else {
                         // First paint - just paint current cell
                         const cellKey = `${clampedX},${clampedY}`;
@@ -2138,48 +2132,20 @@
                 return cell ? cell.color : null;
         }
         
-        // Cache for painted cell features to avoid regenerating geometry
-        let paintedCellsCache = new Map();
-        let lastPaintedCellsSize = 0;
-        
-        // INSTANT painting updates - optimized for speed
+        // ULTRA-FAST painting updates - same speed as hover highlight
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // Only rebuild if cells changed
-                if (paintedCells.size === lastPaintedCellsSize && paintedCellsCache.size > 0) {
-                    return; // No changes, skip update
-                }
-                
-                // IMMEDIATE update - reuse cached geometry when possible
+                // IMMEDIATE update - no caching delays, no size checks
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
-                    let cellFeature = paintedCellsCache.get(cellKey);
-                    if (!cellFeature) {
-                        const [x, y] = cellKey.split(',').map(Number);
-                        cellFeature = generateHoverCell(x, y);
-                        paintedCellsCache.set(cellKey, cellFeature);
-                    }
-                    // Clone and update color
-                    const feature = {
-                        ...cellFeature,
-                        properties: { ...cellFeature.properties, color: cell.color }
-                    };
-                    features.push(feature);
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
                 });
                 
-                // Clean up cache for deleted cells
-                if (paintedCells.size < lastPaintedCellsSize) {
-                    paintedCellsCache.forEach((_, key) => {
-                        if (!paintedCells.has(key)) {
-                            paintedCellsCache.delete(key);
-                        }
-                    });
-                }
-                
-                lastPaintedCellsSize = paintedCells.size;
-                
-                // INSTANT visual feedback
+                // INSTANT visual feedback - no delays whatsoever
                 map.getSource('painted-cells').setData({
                     type: 'FeatureCollection',
                     features: features
