@@ -1761,6 +1761,8 @@
                     overlay.style.boxShadow = 'none';
                     overlay.style.willChange = 'transform,width,height';
                     overlay.style.transform = 'translateZ(0)'; // Force GPU acceleration
+                    overlay.style.backfaceVisibility = 'hidden'; // Additional GPU optimization
+                    overlay.style.perspective = '1000px'; // Enable 3D acceleration
                     
                     // Create SVG corner brackets as background image - more transparent L-shapes
                     const svgCorners = `
@@ -1883,8 +1885,11 @@
             return cells;
         }
 
-        // Throttled mousemove to improve performance
-        let mouseMoveTimeout = null;
+        // High-performance mousemove with RAF optimization
+        let mouseMoveRAF = null;
+        let lastMouseUpdateTime = 0;
+        
+        // Initialize mousemove after short delay
         setTimeout(() => {
             const mapCanvas = map.getCanvasContainer();
             mapCanvas.addEventListener('mousemove', (e) => {
@@ -1893,17 +1898,22 @@
                 lastMouseX = e.clientX - rect.left;
                 lastMouseY = e.clientY - rect.top;
                 
-                // Throttle updates to reduce CPU usage
-                if (!mouseMoveTimeout) {
-                    mouseMoveTimeout = setTimeout(() => {
-                        updateHighlight();
-                        mouseMoveTimeout = null;
-                    }, 8); // ~120fps max update rate
+                // Use RAF for smooth 60fps updates
+                if (!mouseMoveRAF) {
+                    mouseMoveRAF = requestAnimationFrame((timestamp) => {
+                        // Throttle to 60fps max for optimal performance
+                        if (timestamp - lastMouseUpdateTime >= 16) {
+                            updateHighlight();
+                            lastMouseUpdateTime = timestamp;
+                        }
+                        mouseMoveRAF = null;
+                    });
                 }
-            });
+            }, { passive: true }); // Passive listener for better performance
+            
             // Ensure overlay exists
             createHoverOverlay();
-        }, 0);
+        }, 100);
         
         // Color palette (expanded for equal rows)
         const colorPalette = [
@@ -2126,31 +2136,35 @@
                 return cell ? cell.color : null;
         }
         
-        // Debounced update to prevent excessive rendering
-        let updatePaintedCellsTimeout = null;
+        // High-performance batched update system
+        let updatePaintedCellsRAF = null;
+        let pendingCellUpdates = new Set();
+        
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // Clear any pending update
-                if (updatePaintedCellsTimeout) {
-                    clearTimeout(updatePaintedCellsTimeout);
+                // Use RAF for smooth 60fps updates
+                if (!updatePaintedCellsRAF) {
+                    updatePaintedCellsRAF = requestAnimationFrame(() => {
+                        // Batch process all pending updates
+                        const features = [];
+                        paintedCells.forEach((cell, cellKey) => {
+                            const [x, y] = cellKey.split(',').map(Number);
+                            const cellFeature = generateHoverCell(x, y);
+                            cellFeature.properties.color = cell.color;
+                            features.push(cellFeature);
+                        });
+                        
+                        // Single efficient update
+                        map.getSource('painted-cells').setData({
+                            type: 'FeatureCollection',
+                            features: features
+                        });
+                        
+                        updatePaintedCellsRAF = null;
+                        pendingCellUpdates.clear();
+                    });
                 }
-                
-                // Debounce updates to reduce frequency
-                updatePaintedCellsTimeout = setTimeout(() => {
-                    const features = [];
-                    paintedCells.forEach((cell, cellKey) => {
-                        const [x, y] = cellKey.split(',').map(Number);
-                        const cellFeature = generateHoverCell(x, y);
-                        cellFeature.properties.color = cell.color;
-                        features.push(cellFeature);
-                    });
-                    map.getSource('painted-cells').setData({
-                        type: 'FeatureCollection',
-                        features: features
-                    });
-                    updatePaintedCellsTimeout = null;
-                }, 16); // ~60fps max update rate
         }
         
         function updateCellCounter() {
@@ -2288,17 +2302,24 @@
             }
         }
 
-        // Initialize grid when map loads
+        // Initialize map layers when ready
         map.on('load', () => {
             console.log('Map loaded successfully');
+            initializeMapLayers();
+        });
+        
+        function initializeMapLayers() {
+            console.log('Initializing map layers');
             
-            // Add grid lines source and layer
+            // Add grid lines source and layer with optimized settings
             map.addSource('grid-lines', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
-                }
+                },
+                buffer: 0,
+                maxzoom: 24
             });
             
             map.addLayer({
@@ -2310,17 +2331,21 @@
                     'line-width': 1
                 },
                 layout: {
-                    visibility: 'none'
+                    visibility: 'none',
+                    'line-cap': 'butt',
+                    'line-join': 'miter'
                 }
             });
             
-            // Add grid hover source and layer
+            // Add grid hover source and layer with performance optimizations
             map.addSource('grid-hover', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
-                }
+                },
+                buffer: 0,
+                maxzoom: 24
             });
             
             map.addLayer({
@@ -2336,15 +2361,18 @@
                 }
             });
             
-            // Add painted cells source and layer
+            // Add painted cells source and layer with performance optimizations
             map.addSource('painted-cells', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
                 },
-                // Ensure tiny polygons are not simplified away at low zooms
-                tolerance: 0
+                // Performance optimizations
+                tolerance: 0,
+                buffer: 0,
+                maxzoom: 24,
+                generateId: true
             });
 
             map.addLayer({
@@ -2371,7 +2399,7 @@
             updatePaintedCellsVisibility();
             // Update zoom hint visibility on load
             updateZoomHintVisibility();
-        });
+        }
 
         // Toggle painted layer visibility depending on visible grid cells
         function updatePaintedCellsVisibility() {
