@@ -1636,44 +1636,27 @@
                 // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - Instant visual updates
                 if (isSpacePressed && selectedColor) {
                     const currentCell = { x: clampedX, y: clampedY };
-
+                    
                     if (lastPaintedCell) {
                         // Paint all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
-
-                        // INSTANT visual updates - HTML overlay for immediate feedback
+                        
+                        // INSTANT visual updates - no database calls in loop
                         let hasNewPaints = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
                             if (!existingCell || existingCell.color !== selectedColor) {
-                                // INSTANT HTML VISUAL - matches hover responsiveness
-                                instantPaintVisual(cell.x, cell.y, selectedColor);
-
-                                // INSTANT local update
-                                paintedCells.set(cellKey, {
-                                    color: selectedColor,
-                                    owner: USER_ID,
-                                    owner_name: USER_NAME,
-                                    owner_avatar: USER_AVATAR
-                                });
-
-                                // Queue for database (background)
-                                paintQueue.set(cellKey, {
-                                    gridX: cell.x,
-                                    gridY: cell.y,
-                                    color: selectedColor,
-                                    spendCharge: true,
-                                    timestamp: Date.now()
-                                });
-
+                                // Use ultra-fast instant painting
+                                instantPaintCell(cell.x, cell.y, selectedColor);
                                 hasNewPaints = true;
                             }
                         }
-
+                        
                         // Single visual update for all cells
                         if (hasNewPaints) {
                             updatePaintedCellsDisplay();
+                            updateCellCounter();
                             schedulePaintBatch();
                         }
                     } else {
@@ -1681,16 +1664,10 @@
                         const cellKey = `${clampedX},${clampedY}`;
                         const existingCell = paintedCells.get(cellKey);
                         if (!existingCell || existingCell.color !== selectedColor) {
-                            // INSTANT HTML VISUAL - matches hover responsiveness
-                            instantPaintVisual(clampedX, clampedY, selectedColor);
-
-                            paintCell(clampedX, clampedY, selectedColor);
+                            instantPaintCell(clampedX, clampedY, selectedColor);
                         }
                     }
-
                     lastPaintedCell = currentCell;
-                } else {
-                    lastPaintedCell = null; // Reset when not painting
                 }
                 
                 // ULTRA-FAST SWIPE ERASING WITH INTERPOLATION - Instant visual updates
@@ -1700,35 +1677,23 @@
                     if (lastPaintedCell) {
                         // Erase all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
-
+                        
                         // INSTANT visual updates - no database calls in loop
                         let hasNewErases = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
                             if (existingCell && existingCell.owner === USER_ID) {
-                                // INSTANT HTML VISUAL - matches hover responsiveness
-                                instantPaintVisual(cell.x, cell.y, null);
-
-                                // INSTANT local update
-                                paintedCells.delete(cellKey);
-
-                                // Queue for database (background)
-                                paintQueue.set(cellKey, {
-                                    gridX: cell.x,
-                                    gridY: cell.y,
-                                    color: null,
-                                    restoreCharge: true,
-                                    timestamp: Date.now()
-                                });
-
+                                // Use ultra-fast instant erasing
+                                instantPaintCell(cell.x, cell.y, null);
                                 hasNewErases = true;
                             }
                         }
-
+                        
                         // Single visual update for all cells
                         if (hasNewErases) {
                             updatePaintedCellsDisplay();
+                            updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
                         }
@@ -1736,16 +1701,10 @@
                         // First erase - just erase current cell
                         const cellKey = `${clampedX},${clampedY}`;
                         if (paintedCells.has(cellKey)) {
-                            // INSTANT HTML VISUAL - matches hover responsiveness
-                            instantPaintVisual(clampedX, clampedY, null);
-
-                            paintCell(clampedX, clampedY, null);
+                            instantPaintCell(clampedX, clampedY, null);
                         }
                     }
-
                     lastPaintedCell = currentCell;
-                } else {
-                    lastPaintedCell = null; // Reset when not erasing
                 }
                 
                 // INSTANT HTML OVERLAY HIGHLIGHTING - Zero map mutations
@@ -1923,7 +1882,6 @@
             
             // Ensure overlay exists
             createHoverOverlay();
-            createPaintOverlay();
         }, 100);
         
         // Color palette (expanded for equal rows)
@@ -2147,80 +2105,85 @@
                 return cell ? cell.color : null;
         }
         
-        // High-performance batched update system with instant visual feedback
+        // High-performance incremental painting system - matches hover responsiveness
         let updatePaintedCellsRAF = null;
-        let pendingCellUpdates = new Map();
-        let paintOverlay = null;
+        let pendingCellUpdates = new Map(); // cellKey -> {gridX, gridY, color, action}
 
-        function createPaintOverlay() {
-            if (paintOverlay) return paintOverlay;
+        function updatePaintedCellsDisplay() {
+                if (!map.getSource('painted-cells')) return;
 
-            const container = map.getContainer();
-            const overlay = document.createElement('div');
-            overlay.id = 'paintOverlay';
-            overlay.style.position = 'absolute';
-            overlay.style.pointerEvents = 'none';
-            overlay.style.zIndex = '9000'; // Above map but below UI
-            overlay.style.willChange = 'transform,width,height';
-            overlay.style.transform = 'translateZ(0)';
-            overlay.style.backfaceVisibility = 'hidden';
-            overlay.style.left = '0';
-            overlay.style.top = '0';
-            overlay.style.width = '100%';
-            overlay.style.height = '100%';
+                // Use RAF for smooth 60fps updates - same as hover
+                if (!updatePaintedCellsRAF) {
+                    updatePaintedCellsRAF = requestAnimationFrame(() => {
+                        // Get current features from map source
+                        const currentSource = map.getSource('painted-cells');
+                        const currentData = currentSource._data || { type: 'FeatureCollection', features: [] };
 
-            container.appendChild(overlay);
-            paintOverlay = overlay;
-            return overlay;
+                        // Process pending updates incrementally
+                        pendingCellUpdates.forEach((update, cellKey) => {
+                            const [x, y] = [update.gridX, update.gridY];
+                            const featureIndex = currentData.features.findIndex(f =>
+                                f.properties && f.properties.x === x && f.properties.y === y
+                            );
+
+                            if (update.action === 'add' || update.action === 'update') {
+                                // Add or update cell
+                                const cellFeature = generateHoverCell(x, y);
+                                cellFeature.properties.color = update.color;
+
+                                if (featureIndex >= 0) {
+                                    currentData.features[featureIndex] = cellFeature;
+                                } else {
+                                    currentData.features.push(cellFeature);
+                                }
+                            } else if (update.action === 'remove') {
+                                // Remove cell
+                                if (featureIndex >= 0) {
+                                    currentData.features.splice(featureIndex, 1);
+                                }
+                            }
+                        });
+
+                        // Single efficient update
+                        currentSource.setData(currentData);
+
+                        updatePaintedCellsRAF = null;
+                        pendingCellUpdates.clear();
+                    });
+                }
         }
 
-        // Instant HTML-based painting - matches hover responsiveness
-        function instantPaintVisual(gridX, gridY, color) {
-            if (!paintOverlay) createPaintOverlay();
-
+        // Ultra-fast painting with immediate visual feedback
+        function instantPaintCell(gridX, gridY, color) {
             const cellKey = `${gridX},${gridY}`;
-            let cellDiv = paintOverlay.querySelector(`[data-cell="${cellKey}"]`);
 
-            if (color === null) {
-                // Remove painted cell
-                if (cellDiv) {
-                    cellDiv.remove();
-                }
-                return;
+            // Queue for database (background operation)
+            if (color !== null) {
+                pendingCellUpdates.set(cellKey, {
+                    gridX, gridY, color,
+                    action: paintedCells.has(cellKey) ? 'update' : 'add'
+                });
+            } else {
+                pendingCellUpdates.set(cellKey, {
+                    gridX, gridY, color: null,
+                    action: 'remove'
+                });
             }
 
-            if (!cellDiv) {
-                // Create new painted cell div
-                cellDiv = document.createElement('div');
-                cellDiv.setAttribute('data-cell', cellKey);
-                cellDiv.style.position = 'absolute';
-                cellDiv.style.pointerEvents = 'none';
-                cellDiv.style.willChange = 'transform';
-                cellDiv.style.transform = 'translateZ(0)';
-                cellDiv.style.backfaceVisibility = 'hidden';
-                paintOverlay.appendChild(cellDiv);
+            // IMMEDIATE local update - same responsiveness as hover
+            if (color !== null) {
+                paintedCells.set(cellKey, {
+                    color,
+                    owner: USER_ID,
+                    owner_name: USER_NAME,
+                    owner_avatar: USER_AVATAR
+                });
+            } else {
+                paintedCells.delete(cellKey);
             }
 
-            // Position the cell using same coordinate system as hover
-            const bounds = map.getBounds();
-            const pixelBounds = map.getPixelBounds();
-            const zoom = map.getZoom();
-
-            // Convert grid coordinates to map coordinates
-            const cellSize = CELL_SIZE_METERS;
-            const worldX = gridX * cellSize - 20037508.34;
-            const worldY = 20037508.34 - gridY * cellSize;
-
-            // Convert to screen coordinates
-            const point = map.project([worldX * 180 / 20037508.34, worldY * 180 / 20037508.34]);
-            const pixelSize = map.project([worldX * 180 / 20037508.34, worldY * 180 / 20037508.34 + cellSize * 180 / 20037508.34]).y - point.y;
-
-            cellDiv.style.left = `${point.x}px`;
-            cellDiv.style.top = `${point.y}px`;
-            cellDiv.style.width = `${pixelSize}px`;
-            cellDiv.style.height = `${pixelSize}px`;
-            cellDiv.style.backgroundColor = color;
-            cellDiv.style.opacity = '1.0';
+            // Trigger immediate visual update - no delay
+            updatePaintedCellsDisplay();
         }
         
         function updateCellCounter() {
@@ -2328,9 +2291,9 @@
             if (!currentHoveredCell) return;
 
             if (e.originalEvent.button === 0) { // Left click - paint
-                paintCell(gridCoords.x, gridCoords.y, selectedColor);
+                instantPaintCell(gridCoords.x, gridCoords.y, selectedColor);
             } else if (e.originalEvent.button === 2) { // Right click - delete
-                paintCell(gridCoords.x, gridCoords.y, null);
+                instantPaintCell(gridCoords.x, gridCoords.y, null);
             }
 
             // Remember last selected cell (no extra auto-zoom here; painting allowed at <= 2000)
@@ -2358,24 +2321,11 @@
             }
         }
 
-        // Update painted cell positions when map moves/zooms
-        map.on('move', () => {
-            updatePaintOverlayPositions();
+        // Initialize map layers when ready
+        map.on('load', () => {
+            console.log('Map loaded successfully');
+            initializeMapLayers();
         });
-
-        map.on('zoom', () => {
-            updatePaintOverlayPositions();
-        });
-
-        function updatePaintOverlayPositions() {
-            if (!paintOverlay) return;
-
-            // Reposition all painted cells when map moves
-            paintedCells.forEach((cell, cellKey) => {
-                const [gridX, gridY] = cellKey.split(',').map(Number);
-                instantPaintVisual(gridX, gridY, cell.color);
-            });
-        }
         
         function initializeMapLayers() {
             console.log('Initializing map layers');
