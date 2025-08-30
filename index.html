@@ -1434,14 +1434,15 @@
                   // RESTORE CHARGE when erasing own paint
                   if (USER_ID && USER_CHARGES < USER_CAPACITY) {
                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                    updateChargesDisplay();
+                    // Clear cooldown if we're back at capacity
+                    if (USER_CHARGES >= USER_CAPACITY) {
+                      lastRefillAt = null;
+                    }
                     updatePaintButtonUI();
                   }
                   
-                  // INSTANT visual update - no requestAnimationFrame delay
-                  lastPaintedCellsSize = -1; // Force cache refresh
-                  updatePaintedCellsDisplay();
+                  // INSTANT visual update - bypass RAF for immediate response
+                  updatePaintedCellsDisplayImmediate();
                   updateCellCounter();
                   
                   // Queue DB delete with charge restoration
@@ -1471,9 +1472,8 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // INSTANT visual update - force immediate  
-                  lastPaintedCellsSize = -1; // Force cache refresh
-                  updatePaintedCellsDisplay();
+                  // INSTANT visual update - bypass RAF for immediate response
+                  updatePaintedCellsDisplayImmediate();
                   updateCellCounter();
                   
                   // Spend charge locally
@@ -1641,7 +1641,8 @@
                         // Paint all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
                         
-                        // INSTANT visual updates - paint each cell immediately like hover
+                        // INSTANT visual updates - no database calls in loop
+                        let hasNewPaints = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
@@ -1654,9 +1655,6 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // INSTANT visual update - same speed as hover highlight
-                                updatePaintedCellsDisplay();
-                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1665,9 +1663,16 @@
                                     spendCharge: true, 
                                     timestamp: Date.now() 
                                 });
+                                hasNewPaints = true;
                             }
                         }
-                        schedulePaintBatch();
+                        
+                        // Single visual update for all cells
+                        if (hasNewPaints) {
+                            updatePaintedCellsDisplayImmediate();
+                            updateCellCounter();
+                            schedulePaintBatch();
+                        }
                     } else {
                         // First paint - just paint current cell
                         const cellKey = `${clampedX},${clampedY}`;
@@ -1718,8 +1723,7 @@
                         
                         // Single visual update for all cells
                         if (hasNewErases) {
-                            lastPaintedCellsSize = -1; // Force cache refresh for erases
-                            updatePaintedCellsDisplay();
+                            updatePaintedCellsDisplayImmediate();
                             updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
@@ -2132,57 +2136,59 @@
                 return cell ? cell.color : null;
         }
         
-        // Cache geometry to avoid expensive coordinate conversions
-        const cellGeometryCache = new Map();
+        // Dual update system: immediate for painting, batched for other updates
+        let updatePaintedCellsRAF = null;
+        let pendingCellUpdates = new Set();
         
-        function getCachedCellGeometry(gridX, gridY) {
-            const key = `${gridX},${gridY}`;
-            if (!cellGeometryCache.has(key)) {
-                // Only generate geometry once per cell
-                const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
-                const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
-                const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
-                const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
-                
-                const corner1 = fromWebMercator(mercatorX1, mercatorY1);
-                const corner2 = fromWebMercator(mercatorX2, mercatorY1);
-                const corner3 = fromWebMercator(mercatorX2, mercatorY2);
-                const corner4 = fromWebMercator(mercatorX1, mercatorY2);
-                
-                cellGeometryCache.set(key, {
-                    type: 'Polygon',
-                    coordinates: [[
-                        [corner1.lng, corner1.lat],
-                        [corner2.lng, corner2.lat],
-                        [corner3.lng, corner3.lat],
-                        [corner4.lng, corner4.lat],
-                        [corner1.lng, corner1.lat]
-                    ]]
-                });
-            }
-            return cellGeometryCache.get(key);
-        }
-        
-        // INSTANT painting updates - using cached geometry
-        function updatePaintedCellsDisplay() {
+        // IMMEDIATE update for painting - same responsiveness as hover highlighting
+        function updatePaintedCellsDisplayImmediate() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // Use cached geometry - no expensive coordinate conversions
+                // Cancel any pending batched update
+                if (updatePaintedCellsRAF) {
+                    cancelAnimationFrame(updatePaintedCellsRAF);
+                    updatePaintedCellsRAF = null;
+                }
+                
+                // INSTANT update - no delay, same as hover highlighting
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
-                    features.push({
-                        type: 'Feature',
-                        geometry: getCachedCellGeometry(x, y),
-                        properties: { gridX: x, gridY: y, color: cell.color }
-                    });
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
                 });
                 
-                // INSTANT visual feedback
                 map.getSource('painted-cells').setData({
                     type: 'FeatureCollection',
                     features: features
                 });
+        }
+        
+        // Batched update for non-critical updates
+        function updatePaintedCellsDisplay() {
+                if (!map.getSource('painted-cells')) return;
+                
+                // Use RAF for smooth 60fps updates for non-painting operations
+                if (!updatePaintedCellsRAF) {
+                    updatePaintedCellsRAF = requestAnimationFrame(() => {
+                        const features = [];
+                        paintedCells.forEach((cell, cellKey) => {
+                            const [x, y] = cellKey.split(',').map(Number);
+                            const cellFeature = generateHoverCell(x, y);
+                            cellFeature.properties.color = cell.color;
+                            features.push(cellFeature);
+                        });
+                        
+                        map.getSource('painted-cells').setData({
+                            type: 'FeatureCollection',
+                            features: features
+                        });
+                        
+                        updatePaintedCellsRAF = null;
+                        pendingCellUpdates.clear();
+                    });
+                }
         }
         
         function updateCellCounter() {
