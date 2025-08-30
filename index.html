@@ -1416,33 +1416,50 @@
             function paintCell(gridX, gridY, color) {
               const cellKey = `${gridX},${gridY}`;
               const cell = paintedCells.get(cellKey);
+              const source = map.getSource('painted-cells');
+              
+              if (!source) return; // Source not ready yet
 
               if (!supabase || !USER_ID) {
                 showNotification('Storage not configured yet');
                 return;
               }
 
+              // Get current features for direct update
+              const currentFeatures = source._data ? [...source._data.features] : [];
+              
               if (color === null) {
                   if (!cell) return; // nothing to erase
                   if (cell.owner !== USER_ID) {
                       showNotification('You can only delete your own paint.');
                       return;
                   }
-                  // INSTANT local update - IMMEDIATE visual feedback
+                  
+                  // Remove from local state
                   paintedCells.delete(cellKey);
+                  
+                  // Update the source directly for immediate visual feedback
+                  const featureIndex = currentFeatures.findIndex(f => 
+                    f.properties.gridX === gridX && f.properties.gridY === gridY
+                  );
+                  
+                  if (featureIndex !== -1) {
+                    currentFeatures.splice(featureIndex, 1);
+                    source.setData({
+                      type: 'FeatureCollection',
+                      features: currentFeatures
+                    });
+                  }
                   
                   // RESTORE CHARGE when erasing own paint
                   if (USER_ID && USER_CHARGES < USER_CAPACITY) {
                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                    // Clear cooldown if we're back at capacity
                     if (USER_CHARGES >= USER_CAPACITY) {
                       lastRefillAt = null;
                     }
                     updatePaintButtonUI();
                   }
                   
-                  // INSTANT visual update - no requestAnimationFrame delay
-                  updatePaintedCellsDisplay();
                   updateCellCounter();
                   
                   // Queue DB delete with charge restoration
@@ -1457,6 +1474,7 @@
                       showNotification();
                       return;
                   }
+                  
                   // If repainting a cell we already own:
                   let spendCharge = true;
                   if (cell && USER_ID && cell.owner === USER_ID) {
@@ -1467,16 +1485,33 @@
                     }
                     // Allow color change without spending a charge
                     spendCharge = false;
+                    
+                    // Remove existing feature if changing color
+                    const existingIndex = currentFeatures.findIndex(f => 
+                      f.properties.gridX === gridX && f.properties.gridY === gridY
+                    );
+                    if (existingIndex !== -1) {
+                      currentFeatures.splice(existingIndex, 1);
+                    }
                   }
                   
-                  // INSTANT local update - IMMEDIATE visual feedback
+                  // Update local state
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // INSTANT visual update - no requestAnimationFrame delay
-                  updatePaintedCellsDisplay();
+                  // Add new feature for immediate visual feedback
+                  const cellFeature = generateHoverCell(gridX, gridY);
+                  cellFeature.properties.color = color;
+                  currentFeatures.push(cellFeature);
+                  
+                  // Update source directly for immediate visual feedback
+                  source.setData({
+                    type: 'FeatureCollection',
+                    features: currentFeatures
+                  });
+                  
                   updateCellCounter();
                   
-                  // Spend charge locally
+                  // Spend charge locally if needed
                   if (USER_ID && spendCharge) {
                     USER_CHARGES = Math.max(0, USER_CHARGES - 1);
                     lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
@@ -2141,22 +2176,40 @@
         let pendingCellUpdates = new Set();
         
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
+                const source = map.getSource('painted-cells');
+                if (!source) return;
                 
-                // Use RAF for smooth 60fps updates
+                // Only use this for full updates (like initial load or sync)
+                // For individual cell updates, we update the source directly in paintCell
                 if (!updatePaintedCellsRAF) {
                     updatePaintedCellsRAF = requestAnimationFrame(() => {
-                        // Batch process all pending updates
                         const features = [];
-                        paintedCells.forEach((cell, cellKey) => {
+                        let count = 0;
+                        const BATCH_SIZE = 1000; // Process in chunks to avoid blocking
+                        
+                        // Process cells in batches to maintain responsiveness
+                        for (const [cellKey, cell] of paintedCells) {
+                            if (count >= BATCH_SIZE) {
+                                // Set partial data and schedule next batch
+                                source.setData({
+                                    type: 'FeatureCollection',
+                                    features: features
+                                });
+                                
+                                // Schedule next batch
+                                updatePaintedCellsRAF = requestAnimationFrame(updatePaintedCellsDisplay);
+                                return;
+                            }
+                            
                             const [x, y] = cellKey.split(',').map(Number);
                             const cellFeature = generateHoverCell(x, y);
                             cellFeature.properties.color = cell.color;
                             features.push(cellFeature);
-                        });
+                            count++;
+                        }
                         
-                        // Single efficient update
-                        map.getSource('painted-cells').setData({
+                        // Update with final batch
+                        source.setData({
                             type: 'FeatureCollection',
                             features: features
                         });
