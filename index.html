@@ -65,6 +65,7 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
+            cursor: default !important; /* force arrow on map container */
         }
         
         
@@ -155,6 +156,17 @@
         
         .maplibregl-ctrl-bottom-left {
             display: none !important;
+        }
+
+        /* Force arrow cursor on map canvas and interactive containers */
+        .maplibregl-canvas,
+        .maplibregl-canvas-container,
+        .maplibregl-interactive,
+        .maplibregl-grab,
+        .maplibregl-grabbing,
+        .maplibregl-touch-drag-pan,
+        .maplibregl-touch-zoom-rotate {
+            cursor: default !important;
         }
 
         /* Palette button and color palette styles */
@@ -1561,6 +1573,7 @@
         let lastMouseX = 0;
         let lastMouseY = 0;
         let lastPaintedCell = null; // Track last painted cell for interpolation
+        let hoverOverlayEl = null; // HTML overlay for hover highlight (map-independent)
         
         function updateHighlight() {
             // Direct coordinate calculation that works even before map loads
@@ -1725,21 +1738,116 @@
                     lastPaintedCell = currentCell;
                 }
                 
-                // ALWAYS update hover layer - NO GRID VISIBILITY CHECKS
-                try {
-                    const hoverCell = generateHoverCell(clampedX, clampedY);
-                    if (map.getSource && map.getSource('grid-hover')) {
-                        map.getSource('grid-hover').setData({
-                            type: 'FeatureCollection',
-                            features: [hoverCell]
-                        });
-                    }
-                } catch (e) {
-                    // Silent fail - highlighting continues working
-                }
+                // INSTANT HTML OVERLAY HIGHLIGHTING - Zero map mutations
+                updateHtmlHighlight(clampedX, clampedY);
             } catch (e) {
                 // Complete fallback - still track mouse position
                 currentHoveredCell = { x: 1000000, y: 1000000 }; // Center of grid as fallback
+            }
+        }
+
+        // HTML hover overlay helpers (map-independent)
+        function createHoverOverlay() {
+            try {
+                const container = map.getContainer();
+                let overlay = container.querySelector('#hoverOverlay');
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'hoverOverlay';
+                    overlay.style.position = 'absolute';
+                    overlay.style.pointerEvents = 'none';
+                    overlay.style.zIndex = '9999';
+                    overlay.style.border = 'none';
+                    overlay.style.boxShadow = 'none';
+                    overlay.style.willChange = 'transform,width,height';
+                    
+                    // Create SVG corner brackets as background image - more transparent L-shapes
+                    const svgCorners = `
+                        <svg width="100%" height="100%" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+                            <!-- Top-left L - White outer -->
+                            <path d="M0 0 L0 35 L8 35 L8 8 L35 8 L35 0 Z" fill="rgba(255,255,255,0.5)"/>
+                            <!-- Top-left L - Black inner -->
+                            <path d="M8 8 L8 35 L16 35 L16 16 L35 16 L35 8 Z" fill="rgba(0,0,0,0.3)"/>
+                            
+                            <!-- Top-right L - White outer -->
+                            <path d="M100 0 L100 35 L92 35 L92 8 L65 8 L65 0 Z" fill="rgba(255,255,255,0.5)"/>
+                            <!-- Top-right L - Black inner -->
+                            <path d="M92 8 L92 35 L84 35 L84 16 L65 16 L65 8 Z" fill="rgba(0,0,0,0.3)"/>
+                            
+                            <!-- Bottom-left L - White outer -->
+                            <path d="M0 100 L0 65 L8 65 L8 92 L35 92 L35 100 Z" fill="rgba(255,255,255,0.5)"/>
+                            <!-- Bottom-left L - Black inner -->
+                            <path d="M8 92 L8 65 L16 65 L16 84 L35 84 L35 92 Z" fill="rgba(0,0,0,0.3)"/>
+                            
+                            <!-- Bottom-right L - White outer -->
+                            <path d="M100 100 L100 65 L92 65 L92 92 L65 92 L65 100 Z" fill="rgba(255,255,255,0.5)"/>
+                            <!-- Bottom-right L - Black inner -->
+                            <path d="M92 92 L92 65 L84 65 L84 84 L65 84 L65 92 Z" fill="rgba(0,0,0,0.3)"/>
+                        </svg>
+                    `;
+                    
+                    const svgDataUri = 'data:image/svg+xml;base64,' + btoa(svgCorners);
+                    overlay.style.backgroundImage = `url("${svgDataUri}")`;
+                    overlay.style.backgroundSize = '100% 100%';
+                    overlay.style.backgroundRepeat = 'no-repeat';
+                    overlay.style.backgroundPosition = 'center';
+                    
+                    container.appendChild(overlay);
+                }
+                hoverOverlayEl = overlay;
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        function updateHtmlHighlight(gridX, gridY) {
+            if (!hoverOverlayEl) createHoverOverlay();
+            if (!hoverOverlayEl) return;
+            
+            // Check if viewport has too many cells - hide highlight when zoomed out
+            try {
+                const visibleCells = getVisibleGridCells();
+                const totalVisibleCells = visibleCells.x * visibleCells.y;
+                if (totalVisibleCells > HOVER_THRESHOLD * HOVER_THRESHOLD) {
+                    hoverOverlayEl.style.display = 'none';
+                    return;
+                }
+            } catch (e) {
+                // If we can't calculate, assume we should show it
+            }
+            
+            try {
+                // Compute cell corners in EPSG:3857 then convert to lng/lat
+                const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
+                const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
+                const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
+                const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
+
+                const corner1 = fromWebMercator(mercatorX1, mercatorY1); // top-left
+                const corner3 = fromWebMercator(mercatorX2, mercatorY2); // bottom-right
+
+                // Project to screen (read-only)
+                const p1 = map.project([corner1.lng, corner1.lat]);
+                const p3 = map.project([corner3.lng, corner3.lat]);
+
+                const left = Math.min(p1.x, p3.x);
+                const top = Math.min(p1.y, p3.y);
+                const width = Math.max(1, Math.abs(p3.x - p1.x));
+                const height = Math.max(1, Math.abs(p3.y - p1.y));
+
+                hoverOverlayEl.style.transform = `translate(${left}px, ${top}px)`;
+                hoverOverlayEl.style.width = `${width}px`;
+                hoverOverlayEl.style.height = `${height}px`;
+                hoverOverlayEl.style.display = 'block';
+            } catch (e) {
+                // If projection unavailable (very early), show tiny fallback at mouse
+                const size = 6;
+                const left = lastMouseX - size / 2;
+                const top = lastMouseY - size / 2;
+                hoverOverlayEl.style.transform = `translate(${left}px, ${top}px)`;
+                hoverOverlayEl.style.width = `${size}px`;
+                hoverOverlayEl.style.height = `${size}px`;
+                hoverOverlayEl.style.display = 'block';
             }
         }
 
@@ -1786,6 +1894,8 @@
                 // Immediate update without waiting for requestAnimationFrame
                 updateHighlight();
             });
+            // Ensure overlay exists
+            createHoverOverlay();
         }, 0);
         
         // Color palette (expanded for equal rows)
@@ -2009,8 +2119,29 @@
                 return cell ? cell.color : null;
         }
         
+        // Map-independent painted cells container
+        let paintedCellsContainer = null;
+
+        function createPaintedCellsContainer() {
+            if (!paintedCellsContainer) {
+                const container = map.getContainer();
+                paintedCellsContainer = document.createElement('div');
+                paintedCellsContainer.id = 'paintedCellsContainer';
+                paintedCellsContainer.style.position = 'absolute';
+                paintedCellsContainer.style.top = '0';
+                paintedCellsContainer.style.left = '0';
+                paintedCellsContainer.style.width = '100%';
+                paintedCellsContainer.style.height = '100%';
+                paintedCellsContainer.style.pointerEvents = 'none';
+                paintedCellsContainer.style.zIndex = '1000';
+                container.appendChild(paintedCellsContainer);
+            }
+            return paintedCellsContainer;
+        }
+
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
+            // Update map layer if available
+            if (map.getSource && map.getSource('painted-cells')) {
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
@@ -2022,6 +2153,55 @@
                     type: 'FeatureCollection',
                     features: features
                 });
+            }
+
+            // INSTANT HTML overlay update (map-independent)
+            updateHtmlPaintedCells();
+        }
+
+        function updateHtmlPaintedCells() {
+            try {
+                const container = createPaintedCellsContainer();
+                
+                // Clear existing painted cell overlays
+                container.innerHTML = '';
+
+                // Create HTML overlays for each painted cell
+                paintedCells.forEach((cell, cellKey) => {
+                    const [gridX, gridY] = cellKey.split(',').map(Number);
+                    
+                    // Calculate cell position and size
+                    const corner1 = gridToGeo(gridX, gridY);
+                    const corner3 = gridToGeo(gridX + 1, gridY + 1);
+                    
+                    try {
+                        const p1 = map.project([corner1.lng, corner1.lat]);
+                        const p3 = map.project([corner3.lng, corner3.lat]);
+                        
+                        const left = Math.min(p1.x, p3.x);
+                        const top = Math.min(p1.y, p3.y);
+                        const width = Math.abs(p3.x - p1.x);
+                        const height = Math.abs(p3.y - p1.y);
+                        
+                        // Create painted cell overlay
+                        const cellOverlay = document.createElement('div');
+                        cellOverlay.style.position = 'absolute';
+                        cellOverlay.style.left = `${left}px`;
+                        cellOverlay.style.top = `${top}px`;
+                        cellOverlay.style.width = `${width}px`;
+                        cellOverlay.style.height = `${height}px`;
+                        cellOverlay.style.backgroundColor = cell.color;
+                        cellOverlay.style.pointerEvents = 'none';
+                        cellOverlay.style.opacity = '1';
+                        
+                        container.appendChild(cellOverlay);
+                    } catch (e) {
+                        // Skip cells that can't be projected (map not ready)
+                    }
+                });
+            } catch (e) {
+                // Fallback: ignore HTML overlay errors
+            }
         }
         
         function updateCellCounter() {
@@ -2078,13 +2258,11 @@
 
         // Handle mouse leave
         function handleMouseLeave() {
-            if (currentHoveredCell) {
-                map.getSource('grid-hover').setData({
-                    type: 'FeatureCollection',
-                    features: []
-                });
-                currentHoveredCell = null;
+            // Hide HTML overlay (no map mutations)
+            if (hoverOverlayEl) {
+                hoverOverlayEl.style.display = 'none';
             }
+            currentHoveredCell = null;
             // Reset mouse button states when leaving map
             isRightMouseDown = false;
         }
@@ -2310,6 +2488,12 @@
         map.on('move', () => {
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
+            // Keep HTML overlay aligned with current hovered cell during pan/zoom
+            if (currentHoveredCell) {
+                updateHtmlHighlight(currentHoveredCell.x, currentHoveredCell.y);
+            }
+            // Update HTML painted cells positions during pan/zoom
+            updateHtmlPaintedCells();
         });
 
         // After interactions settle, re-evaluate to avoid threshold flicker
