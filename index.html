@@ -1253,8 +1253,12 @@
               const key = `${row.x},${row.y}`;
               if (row.color === null) {
                 paintedCells.delete(key);
+                // INSTANT HTML OVERLAY REMOVAL - Super responsive
+                removePaintedCellOverlay(row.x, row.y);
               } else {
                 paintedCells.set(key, { color: row.color, owner: row.owner, owner_name: row.owner_name || null, owner_avatar: row.owner_avatar || null });
+                // INSTANT HTML OVERLAY CREATION - Super responsive
+                createPaintedCellOverlay(row.x, row.y, row.color);
               }
             }
 
@@ -1267,7 +1271,7 @@
               if (error) { console.error('Initial load error', error); return; }
               paintedCells.clear();
               for (const row of data) mergeRow(row);
-              updatePaintedCellsDisplay();
+              // No need for updatePaintedCellsDisplay() - mergeRow() creates overlays instantly
               updateCellCounter();
             }
 
@@ -1283,7 +1287,7 @@
               if (data && data.length) {
                 for (const row of data) mergeRow(row);
                 lastSeen = data[data.length - 1].updated_at;
-                updatePaintedCellsDisplay();
+                // No need for updatePaintedCellsDisplay() - mergeRow() creates overlays instantly
                 updateCellCounter();
               }
             }
