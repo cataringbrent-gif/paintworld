@@ -1915,6 +1915,10 @@
             createHoverOverlay();
         }, 100);
         
+        // Update paint overlays on map move/zoom
+        map.on('move', updateAllPaintOverlayPositions);
+        map.on('zoom', updateAllPaintOverlayPositions);
+        
         // Color palette (expanded for equal rows)
         const colorPalette = [
             '#6D001A', '#BE0039', '#FF4500', '#FFA800', '#FFD635', '#FFF8B8', '#00A368', '#00CC78',
@@ -2140,8 +2144,96 @@
         let updatePaintedCellsRAF = null;
         let pendingCellUpdates = new Set();
         
-        // IMMEDIATE update for painting - same responsiveness as hover highlighting
+        // INSTANT paint overlay system - same tech as hover highlighting
+        let paintOverlays = new Map(); // cellKey -> overlay element
+        
+        function createPaintOverlay(gridX, gridY, color) {
+            const cellKey = `${gridX},${gridY}`;
+            
+            try {
+                const container = map.getContainer();
+                let overlay = paintOverlays.get(cellKey);
+                
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.style.position = 'absolute';
+                    overlay.style.pointerEvents = 'none';
+                    overlay.style.zIndex = '9998'; // Just below hover overlay
+                    overlay.style.willChange = 'transform,width,height';
+                    overlay.style.transform = 'translateZ(0)';
+                    overlay.style.backfaceVisibility = 'hidden';
+                    container.appendChild(overlay);
+                    paintOverlays.set(cellKey, overlay);
+                }
+                
+                // Set color and position instantly
+                overlay.style.backgroundColor = color;
+                overlay.style.display = 'block';
+                
+                // Position overlay exactly like hover highlighting
+                updatePaintOverlayPosition(overlay, gridX, gridY);
+                
+            } catch (e) {
+                // Fallback to map update
+                updatePaintedCellsDisplayImmediate();
+            }
+        }
+        
+        function updatePaintOverlayPosition(overlay, gridX, gridY) {
+            try {
+                const corner1 = { lng: gridX * CELL_SIZE_METERS, lat: (gridY + 1) * CELL_SIZE_METERS };
+                const corner3 = { lng: (gridX + 1) * CELL_SIZE_METERS, lat: gridY * CELL_SIZE_METERS };
+                
+                const p1 = map.project([corner1.lng, corner1.lat]);
+                const p3 = map.project([corner3.lng, corner3.lat]);
+                
+                const left = Math.min(p1.x, p3.x);
+                const top = Math.min(p1.y, p3.y);
+                const width = Math.abs(p3.x - p1.x);
+                const height = Math.abs(p3.y - p1.y);
+                
+                overlay.style.transform = `translate(${left}px, ${top}px)`;
+                overlay.style.width = `${width}px`;
+                overlay.style.height = `${height}px`;
+            } catch (e) {
+                // Hide if positioning fails
+                overlay.style.display = 'none';
+            }
+        }
+        
+        function removePaintOverlay(gridX, gridY) {
+            const cellKey = `${gridX},${gridY}`;
+            const overlay = paintOverlays.get(cellKey);
+            if (overlay) {
+                overlay.remove();
+                paintOverlays.delete(cellKey);
+            }
+        }
+        
+        // Update all paint overlay positions on map move/zoom
+        function updateAllPaintOverlayPositions() {
+            paintOverlays.forEach((overlay, cellKey) => {
+                const [x, y] = cellKey.split(',').map(Number);
+                updatePaintOverlayPosition(overlay, x, y);
+            });
+        }
+        
+        // IMMEDIATE update for painting - true instant like hover highlighting
         function updatePaintedCellsDisplayImmediate() {
+                // First update instant overlays
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    createPaintOverlay(x, y, cell.color);
+                });
+                
+                // Remove overlays for deleted cells
+                paintOverlays.forEach((overlay, cellKey) => {
+                    if (!paintedCells.has(cellKey)) {
+                        removePaintOverlay(...cellKey.split(',').map(Number));
+                    }
+                });
+                
+                // Also update map source (but this is secondary)
                 if (!map.getSource('painted-cells')) return;
                 
                 // Cancel any pending batched update
@@ -2150,19 +2242,21 @@
                     updatePaintedCellsRAF = null;
                 }
                 
-                // INSTANT update - no delay, same as hover highlighting
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
+                // Background map update
+                setTimeout(() => {
+                    const features = [];
+                    paintedCells.forEach((cell, cellKey) => {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        const cellFeature = generateHoverCell(x, y);
+                        cellFeature.properties.color = cell.color;
+                        features.push(cellFeature);
+                    });
+                    
+                    map.getSource('painted-cells').setData({
+                        type: 'FeatureCollection',
+                        features: features
+                    });
+                }, 0);
         }
         
         // Batched update for non-critical updates
