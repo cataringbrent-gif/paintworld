@@ -2132,20 +2132,53 @@
                 return cell ? cell.color : null;
         }
         
-        // ULTRA-FAST painting updates - same speed as hover highlight
+        // Cache geometry to avoid expensive coordinate conversions
+        const cellGeometryCache = new Map();
+        
+        function getCachedCellGeometry(gridX, gridY) {
+            const key = `${gridX},${gridY}`;
+            if (!cellGeometryCache.has(key)) {
+                // Only generate geometry once per cell
+                const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
+                const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
+                const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
+                const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
+                
+                const corner1 = fromWebMercator(mercatorX1, mercatorY1);
+                const corner2 = fromWebMercator(mercatorX2, mercatorY1);
+                const corner3 = fromWebMercator(mercatorX2, mercatorY2);
+                const corner4 = fromWebMercator(mercatorX1, mercatorY2);
+                
+                cellGeometryCache.set(key, {
+                    type: 'Polygon',
+                    coordinates: [[
+                        [corner1.lng, corner1.lat],
+                        [corner2.lng, corner2.lat],
+                        [corner3.lng, corner3.lat],
+                        [corner4.lng, corner4.lat],
+                        [corner1.lng, corner1.lat]
+                    ]]
+                });
+            }
+            return cellGeometryCache.get(key);
+        }
+        
+        // INSTANT painting updates - using cached geometry
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // IMMEDIATE update - no caching delays, no size checks
+                // Use cached geometry - no expensive coordinate conversions
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
+                    features.push({
+                        type: 'Feature',
+                        geometry: getCachedCellGeometry(x, y),
+                        properties: { gridX: x, gridY: y, color: cell.color }
+                    });
                 });
                 
-                // INSTANT visual feedback - no delays whatsoever
+                // INSTANT visual feedback
                 map.getSource('painted-cells').setData({
                     type: 'FeatureCollection',
                     features: features
