@@ -1434,14 +1434,13 @@
                   // RESTORE CHARGE when erasing own paint
                   if (USER_ID && USER_CHARGES < USER_CAPACITY) {
                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                    // Clear cooldown if we're back at capacity
-                    if (USER_CHARGES >= USER_CAPACITY) {
-                      lastRefillAt = null;
-                    }
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                    updateChargesDisplay();
                     updatePaintButtonUI();
                   }
                   
                   // INSTANT visual update - no requestAnimationFrame delay
+                  lastPaintedCellsSize = -1; // Force cache refresh
                   updatePaintedCellsDisplay();
                   updateCellCounter();
                   
@@ -1472,7 +1471,8 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // INSTANT visual update - no requestAnimationFrame delay
+                  // INSTANT visual update - force immediate  
+                  lastPaintedCellsSize = -1; // Force cache refresh
                   updatePaintedCellsDisplay();
                   updateCellCounter();
                   
@@ -1669,6 +1669,7 @@
                         
                         // Single visual update for all cells
                         if (hasNewPaints) {
+                            lastPaintedCellsSize = -1; // Force cache refresh for new paints
                             updatePaintedCellsDisplay();
                             updateCellCounter();
                             schedulePaintBatch();
@@ -1723,6 +1724,7 @@
                         
                         // Single visual update for all cells
                         if (hasNewErases) {
+                            lastPaintedCellsSize = -1; // Force cache refresh for erases
                             updatePaintedCellsDisplay();
                             updateCellCounter();
                             updateChargesDisplay();
@@ -2136,18 +2138,46 @@
                 return cell ? cell.color : null;
         }
         
-        // INSTANT painting updates - same speed as hover highlight
+        // Cache for painted cell features to avoid regenerating geometry
+        let paintedCellsCache = new Map();
+        let lastPaintedCellsSize = 0;
+        
+        // INSTANT painting updates - optimized for speed
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // IMMEDIATE update - no delays, no RAF, no throttling
+                // Only rebuild if cells changed
+                if (paintedCells.size === lastPaintedCellsSize && paintedCellsCache.size > 0) {
+                    return; // No changes, skip update
+                }
+                
+                // IMMEDIATE update - reuse cached geometry when possible
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
+                    let cellFeature = paintedCellsCache.get(cellKey);
+                    if (!cellFeature) {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        cellFeature = generateHoverCell(x, y);
+                        paintedCellsCache.set(cellKey, cellFeature);
+                    }
+                    // Clone and update color
+                    const feature = {
+                        ...cellFeature,
+                        properties: { ...cellFeature.properties, color: cell.color }
+                    };
+                    features.push(feature);
                 });
+                
+                // Clean up cache for deleted cells
+                if (paintedCells.size < lastPaintedCellsSize) {
+                    paintedCellsCache.forEach((_, key) => {
+                        if (!paintedCells.has(key)) {
+                            paintedCellsCache.delete(key);
+                        }
+                    });
+                }
+                
+                lastPaintedCellsSize = paintedCells.size;
                 
                 // INSTANT visual feedback
                 map.getSource('painted-cells').setData({
