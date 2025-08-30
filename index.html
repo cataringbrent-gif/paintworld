@@ -2136,35 +2136,24 @@
                 return cell ? cell.color : null;
         }
         
-        // ULTRA-RESPONSIVE PAINTING - Match highlight speed
-        let updatePaintedCellsRAF = null;
-        let lastPaintUpdateTime = 0;
-
+        // ULTRA-FAST INSTANT PAINTING - No RAF delay for immediate visual feedback
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
-
-                // Immediate RAF update - no delays
-                if (!updatePaintedCellsRAF) {
-                    updatePaintedCellsRAF = requestAnimationFrame((timestamp) => {
-                        // Process all painted cells instantly
-                        const features = [];
-                        paintedCells.forEach((cell, cellKey) => {
-                            const [x, y] = cellKey.split(',').map(Number);
-                            const cellFeature = generateHoverCell(x, y);
-                            cellFeature.properties.color = cell.color;
-                            features.push(cellFeature);
-                        });
-
-                        // Single efficient update - matches highlight responsiveness
-                        map.getSource('painted-cells').setData({
-                            type: 'FeatureCollection',
-                            features: features
-                        });
-
-                        updatePaintedCellsRAF = null;
-                        lastPaintUpdateTime = timestamp;
-                    });
-                }
+                
+                // IMMEDIATE UPDATE - No requestAnimationFrame delay
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
+                });
+                
+                // Single efficient update
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
         }
         
         function updateCellCounter() {
