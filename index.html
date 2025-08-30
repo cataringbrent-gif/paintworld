@@ -1441,8 +1441,8 @@
                     updatePaintButtonUI();
                   }
                   
-                  // INSTANT visual update - no requestAnimationFrame delay
-                  updatePaintedCellsDisplay();
+                  // INSTANT visual update - same responsiveness as hover
+                  queueInstantPaint(clampedX, clampedY, null);
                   updateCellCounter();
                   
                   // Queue DB delete with charge restoration
@@ -1472,8 +1472,8 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // INSTANT visual update - no requestAnimationFrame delay
-                  updatePaintedCellsDisplay();
+                  // INSTANT visual update - same responsiveness as hover
+                  queueInstantPaint(clampedX, clampedY, color);
                   updateCellCounter();
                   
                   // Spend charge locally
@@ -1667,9 +1667,15 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // Single visual update for all cells - INSTANT like hover
                         if (hasNewPaints) {
-                            updatePaintedCellsDisplay();
+                            // Use instant updates for each cell instead of batch
+                            for (const cell of interpolatedCells) {
+                                const cellKey = `${cell.x},${cell.y}`;
+                                if (paintedCells.has(cellKey)) {
+                                    queueInstantPaint(cell.x, cell.y, selectedColor);
+                                }
+                            }
                             updateCellCounter();
                             schedulePaintBatch();
                         }
@@ -1721,9 +1727,15 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // Single visual update for all cells - INSTANT like hover
                         if (hasNewErases) {
-                            updatePaintedCellsDisplay();
+                            // Use instant updates for each cell instead of batch
+                            for (const cell of interpolatedCells) {
+                                const cellKey = `${cell.x},${cell.y}`;
+                                if (paintedCells.has(cellKey)) {
+                                    queueInstantPaint(cell.x, cell.y, null);
+                                }
+                            }
                             updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
@@ -2136,24 +2148,52 @@
                 return cell ? cell.color : null;
         }
         
-        // ULTRA-FAST INSTANT PAINTING - No RAF delay for immediate visual feedback
-        function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
-                
-                // IMMEDIATE UPDATE - No requestAnimationFrame delay
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
+        // ULTRA-FAST INSTANT PAINTING - Same responsiveness as hover
+        let instantPaintBuffer = new Map(); // Buffer for instant updates
+        let instantPaintTimeout = null;
+
+        function instantPaintUpdate() {
+            if (!map.getSource('painted-cells')) return;
+
+            // Process instant paint buffer immediately
+            const features = [];
+            instantPaintBuffer.forEach((cell, cellKey) => {
+                const [x, y] = cellKey.split(',').map(Number);
+                const cellFeature = generateHoverCell(x, y);
+                cellFeature.properties.color = cell.color;
+                features.push(cellFeature);
+            });
+
+            // Add existing cells that weren't updated
+            paintedCells.forEach((cell, cellKey) => {
+                if (!instantPaintBuffer.has(cellKey)) {
                     const [x, y] = cellKey.split(',').map(Number);
                     const cellFeature = generateHoverCell(x, y);
                     cellFeature.properties.color = cell.color;
                     features.push(cellFeature);
-                });
-                
-                // Single efficient update
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
+                }
+            });
+
+            // INSTANT update - no RAF delay
+            map.getSource('painted-cells').setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+
+            instantPaintBuffer.clear();
+        }
+
+        function queueInstantPaint(gridX, gridY, color) {
+            const cellKey = `${gridX},${gridY}`;
+            instantPaintBuffer.set(cellKey, { color });
+
+            // Clear any pending batch update
+            if (instantPaintTimeout) {
+                clearTimeout(instantPaintTimeout);
+            }
+
+            // INSTANT visual feedback - same as hover responsiveness
+            instantPaintTimeout = setTimeout(instantPaintUpdate, 0);
         }
         
         function updateCellCounter() {
