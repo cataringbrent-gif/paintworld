@@ -2136,35 +2136,24 @@
                 return cell ? cell.color : null;
         }
         
-        // High-performance batched update system
-        let updatePaintedCellsRAF = null;
-        let pendingCellUpdates = new Set();
-        
+        // INSTANT painting updates - same speed as hover highlight
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // Use RAF for smooth 60fps updates
-                if (!updatePaintedCellsRAF) {
-                    updatePaintedCellsRAF = requestAnimationFrame(() => {
-                        // Batch process all pending updates
-                        const features = [];
-                        paintedCells.forEach((cell, cellKey) => {
-                            const [x, y] = cellKey.split(',').map(Number);
-                            const cellFeature = generateHoverCell(x, y);
-                            cellFeature.properties.color = cell.color;
-                            features.push(cellFeature);
-                        });
-                        
-                        // Single efficient update
-                        map.getSource('painted-cells').setData({
-                            type: 'FeatureCollection',
-                            features: features
-                        });
-                        
-                        updatePaintedCellsRAF = null;
-                        pendingCellUpdates.clear();
-                    });
-                }
+                // IMMEDIATE update - no delays, no RAF, no throttling
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
+                });
+                
+                // INSTANT visual feedback
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
         }
         
         function updateCellCounter() {
