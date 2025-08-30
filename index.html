@@ -2162,20 +2162,46 @@
                     overlay.style.willChange = 'transform,width,height';
                     overlay.style.transform = 'translateZ(0)';
                     overlay.style.backfaceVisibility = 'hidden';
+                    overlay.style.perspective = '1000px';
+                    
+                    // Create solid color square as background image - same technique as hover highlighting
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 100;
+                    canvas.height = 100;
+                    const ctx = canvas.getContext('2d');
+                    
+                    overlay.style.backgroundSize = '100% 100%';
+                    overlay.style.backgroundRepeat = 'no-repeat';
+                    overlay.style.backgroundPosition = 'center';
+                    
                     container.appendChild(overlay);
                     paintOverlays.set(cellKey, overlay);
                 }
                 
-                // Set color and position instantly
-                overlay.style.backgroundColor = color;
+                // Update color instantly using background image technique
+                const canvas = document.createElement('canvas');
+                canvas.width = 100;
+                canvas.height = 100;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = color;
+                ctx.fillRect(0, 0, 100, 100);
+                
+                const dataUri = canvas.toDataURL();
+                overlay.style.backgroundImage = `url("${dataUri}")`;
                 overlay.style.display = 'block';
                 
                 // Position overlay exactly like hover highlighting
                 updatePaintOverlayPosition(overlay, gridX, gridY);
                 
             } catch (e) {
-                // Fallback to map update
-                updatePaintedCellsDisplayImmediate();
+                // Fallback to simple background color
+                const container = map.getContainer();
+                let overlay = paintOverlays.get(cellKey);
+                if (overlay) {
+                    overlay.style.backgroundColor = color;
+                    overlay.style.display = 'block';
+                    updatePaintOverlayPosition(overlay, gridX, gridY);
+                }
             }
         }
         
@@ -2220,43 +2246,21 @@
         
         // IMMEDIATE update for painting - true instant like hover highlighting
         function updatePaintedCellsDisplayImmediate() {
-                // First update instant overlays
+                // INSTANT overlay updates - same responsiveness as hover highlighting
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
                     createPaintOverlay(x, y, cell.color);
                 });
                 
-                // Remove overlays for deleted cells
+                // Remove overlays for deleted cells instantly
                 paintOverlays.forEach((overlay, cellKey) => {
                     if (!paintedCells.has(cellKey)) {
                         removePaintOverlay(...cellKey.split(',').map(Number));
                     }
                 });
                 
-                // Also update map source (but this is secondary)
-                if (!map.getSource('painted-cells')) return;
-                
-                // Cancel any pending batched update
-                if (updatePaintedCellsRAF) {
-                    cancelAnimationFrame(updatePaintedCellsRAF);
-                    updatePaintedCellsRAF = null;
-                }
-                
-                // Background map update
-                setTimeout(() => {
-                    const features = [];
-                    paintedCells.forEach((cell, cellKey) => {
-                        const [x, y] = cellKey.split(',').map(Number);
-                        const cellFeature = generateHoverCell(x, y);
-                        cellFeature.properties.color = cell.color;
-                        features.push(cellFeature);
-                    });
-                    
-                    map.getSource('painted-cells').setData({
-                        type: 'FeatureCollection',
-                        features: features
-                    });
-                }, 0);
+                // Skip map source updates entirely for instant response
+                // Map source will be updated in background later
         }
         
         // Batched update for non-critical updates
