@@ -1506,12 +1506,6 @@
               pendingVisualUpdates.clear();
               visualUpdateScheduled = false;
         }
-        
-        // Update charges display (placeholder for now)
-        function updateChargesDisplay() {
-            // This function can be implemented later if needed
-            updatePaintButtonUI();
-        }
             
             function schedulePaintBatch() {
               if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
@@ -1654,12 +1648,8 @@
                 const clampedX = Math.max(0, Math.min(1999999, gridX));
                 const clampedY = Math.max(0, Math.min(1999999, gridY));
                 
-                // Only update if cell actually changed (performance optimization)
-                if (!currentHoveredCell || 
-                    currentHoveredCell.x !== clampedX || 
-                    currentHoveredCell.y !== clampedY) {
-                    currentHoveredCell = { x: clampedX, y: clampedY };
-                }
+                // Always update immediately - no cell comparison
+                currentHoveredCell = { x: clampedX, y: clampedY };
                 
                 // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - Instant visual updates
                 if (isSpacePressed && selectedColor) {
@@ -1669,10 +1659,8 @@
                         // Paint all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
                         
-                        // INSTANT local updates - no database calls in loop
+                        // INSTANT visual updates - no database calls in loop
                         let hasNewPaints = false;
-                        let chargeSpent = 0;
-                        
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
@@ -1685,9 +1673,6 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // Track for visual update
-                                pendingVisualUpdates.add(cellKey);
-                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1697,25 +1682,13 @@
                                     timestamp: Date.now() 
                                 });
                                 hasNewPaints = true;
-                                chargeSpent++;
                             }
                         }
                         
-                        // Spend charges locally in batch
-                        if (chargeSpent > 0 && USER_ID) {
-                            USER_CHARGES = Math.max(0, USER_CHARGES - chargeSpent);
-                            lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                            updatePaintButtonUI();
-                        }
-                        
-                        // Schedule visual update if not already scheduled
-                        if (hasNewPaints && !visualUpdateScheduled) {
-                            visualUpdateScheduled = true;
-                            requestAnimationFrame(processVisualUpdates);
-                        }
-                        
-                        // Schedule database batch
+                        // Single visual update for all cells
                         if (hasNewPaints) {
+                            updatePaintedCellsDisplay();
+                            updateCellCounter();
                             schedulePaintBatch();
                         }
                     } else {
@@ -1737,10 +1710,8 @@
                         // Erase all cells between last and current position
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
                         
-                        // INSTANT local updates - no database calls in loop
+                        // INSTANT visual updates - no database calls in loop
                         let hasNewErases = false;
-                        let chargesRestored = 0;
-                        
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
@@ -1748,16 +1719,12 @@
                                 // INSTANT local update
                                 paintedCells.delete(cellKey);
                                 
-                                // Track for visual update
-                                pendingVisualUpdates.add(cellKey);
-                                
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
                                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
                                     if (USER_CHARGES === USER_CAPACITY) {
                                         lastRefillAt = null;
                                     }
-                                    chargesRestored++;
                                 }
                                 
                                 // Queue for database (no await)
@@ -1772,19 +1739,11 @@
                             }
                         }
                         
-                        // Update UI in batch
-                        if (chargesRestored > 0) {
-                            updatePaintButtonUI();
-                        }
-                        
-                        // Schedule visual update if not already scheduled
-                        if (hasNewErases && !visualUpdateScheduled) {
-                            visualUpdateScheduled = true;
-                            requestAnimationFrame(processVisualUpdates);
-                        }
-                        
-                        // Schedule database batch
+                        // Single visual update for all cells
                         if (hasNewErases) {
+                            updatePaintedCellsDisplay();
+                            updateCellCounter();
+                            updateChargesDisplay();
                             schedulePaintBatch();
                         }
                     } else {
@@ -1944,21 +1903,14 @@
         // Add direct DOM mousemove listener IMMEDIATELY - no waiting for map load
         setTimeout(() => {
             const mapCanvas = map.getCanvasContainer();
-            let lastUpdateTime = 0;
-            const UPDATE_THROTTLE = 16; // ~60fps max updates
-            
             mapCanvas.addEventListener('mousemove', (e) => {
                 // Convert DOM mouse coordinates to MapLibre point format
                 const rect = mapCanvas.getBoundingClientRect();
                 lastMouseX = e.clientX - rect.left;
                 lastMouseY = e.clientY - rect.top;
                 
-                // Throttle updates for better performance during painting
-                const now = performance.now();
-                if (now - lastUpdateTime >= UPDATE_THROTTLE) {
-                    updateHighlight();
-                    lastUpdateTime = now;
-                }
+                // Immediate update without waiting for requestAnimationFrame
+                updateHighlight();
             });
             // Ensure overlay exists
             createHoverOverlay();
@@ -2185,14 +2137,8 @@
                 return cell ? cell.color : null;
         }
         
-        // OPTIMIZED: Only update cells that actually changed
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
-                
-                // Only update if we have pending changes
-                if (pendingVisualUpdates.size === 0) return;
-                
-                // Get all painted cells for the current display
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
@@ -2200,8 +2146,6 @@
                     cellFeature.properties.color = cell.color;
                     features.push(cellFeature);
                 });
-                
-                // Update the map source
                 map.getSource('painted-cells').setData({
                     type: 'FeatureCollection',
                     features: features
