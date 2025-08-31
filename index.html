@@ -1655,6 +1655,9 @@
                                     owner_avatar: USER_AVATAR 
                                 });
 
+                                // CLEAR CACHE for instant re-render
+                                paintedCellsFeatureCache = null;
+
                                 // INSTANT VISUAL FEEDBACK - Same as hover highlights
                                 instantPaintCellVisual(cell.x, cell.y, selectedColor);
                         
@@ -1769,6 +1772,9 @@
                             // INSTANT local update
                             paintedCells.delete(cellKey);
                             
+                            // CLEAR CACHE for instant re-render
+                            paintedCellsFeatureCache = null;
+
                             // INSTANT VISUAL ERASE - Remove from overlay
                             if (paintCellsCache.has(cellKey)) {
                                 const cachedCell = paintCellsCache.get(cellKey);
@@ -2207,6 +2213,9 @@
         let updatePaintedCellsRAF = null;
         let pendingCellUpdates = new Set();
 
+        // ULTRA-FAST PAINT RENDERING CACHE
+        let paintedCellsFeatureCache = null;
+
         // INSTANT PAINT OVERLAY - Same responsive system as hover highlights
         let paintOverlay = null;
         let paintCellsCache = new Map(); // cellKey -> {element, color, timestamp}
@@ -2339,6 +2348,65 @@
                                          cell.color);
                 }
             });
+        }
+        
+        function updatePaintedCellsDisplay() {
+                if (!map.getSource('painted-cells')) return;
+
+                // ULTRA-FAST: Use RAF for smooth 60fps updates with minimal overhead
+                if (!updatePaintedCellsRAF) {
+                    updatePaintedCellsRAF = requestAnimationFrame(() => {
+                        // PRE-COMPUTED FEATURES CACHE - Avoid recalculation
+                        if (!paintedCellsFeatureCache || paintedCellsFeatureCache.size !== paintedCells.size) {
+                            // Only rebuild features if the cell count changed
+                            const features = [];
+                            paintedCells.forEach((cell, cellKey) => {
+                                const [x, y] = cellKey.split(',').map(Number);
+
+                                // FAST PATH: Pre-compute mercator coordinates once
+                                const mercatorX1 = (x * CELL_SIZE_METERS) - 20037508.34;
+                                const mercatorY1 = (y * CELL_SIZE_METERS) - 20037508.34;
+                                const mercatorX2 = ((x + 1) * CELL_SIZE_METERS) - 20037508.34;
+                                const mercatorY2 = ((y + 1) * CELL_SIZE_METERS) - 20037508.34;
+
+                                const corner1 = fromWebMercator(mercatorX1, mercatorY1);
+                                const corner2 = fromWebMercator(mercatorX2, mercatorY1);
+                                const corner3 = fromWebMercator(mercatorX2, mercatorY2);
+                                const corner4 = fromWebMercator(mercatorX1, mercatorY2);
+
+                                features.push({
+                                    type: 'Feature',
+                                    geometry: {
+                                        type: 'Polygon',
+                                        coordinates: [[
+                                            [corner1.lng, corner1.lat],
+                                            [corner2.lng, corner2.lat],
+                                            [corner3.lng, corner3.lat],
+                                            [corner4.lng, corner4.lat],
+                                            [corner1.lng, corner1.lat]
+                                        ]]
+                                    },
+                                    properties: { color: cell.color, gridX: x, gridY: y }
+                                });
+                            });
+
+                            // ULTRA-FAST UPDATE: Single efficient data swap
+                            map.getSource('painted-cells').setData({
+                                type: 'FeatureCollection',
+                                features: features
+                            });
+
+                            paintedCellsFeatureCache = new Map(paintedCells);
+                        }
+
+                        // Sync overlay with map layer (for other users' paints and zoom/move updates)
+                        syncOverlayWithMapLayer();
+                        addOtherUsersPaintsToOverlay();
+
+                        updatePaintedCellsRAF = null;
+                        pendingCellUpdates.clear();
+                    });
+                }
         }
         
         function updateCellCounter() {
@@ -2535,20 +2603,21 @@
                 }
             });
             
-            // Add painted cells source and layer with ULTRA FAST optimizations
+            // Add painted cells source and layer with ULTRA-FAST performance optimizations
             map.addSource('painted-cells', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
                 },
-                // ULTRA FAST OPTIMIZATIONS
-                tolerance: 0.1, // Allow some simplification for speed
-                buffer: 1, // Minimal buffer for speed
-                maxzoom: 24,
-                generateId: true,
-                // Critical: Use feature state instead of recreating features
-                promoteId: 'id'
+                // MAXIMUM SPEED OPTIMIZATIONS
+                tolerance: 0,        // No simplification for pixel-perfect accuracy
+                buffer: 0,           // No buffer for instant updates
+                maxzoom: 24,         // Full zoom range support
+                generateId: false,   // Skip ID generation for speed
+                // Ultra-fast rendering settings
+                promoteId: null,     // Skip ID promotion
+                cluster: false       // No clustering needed
             });
 
             map.addLayer({
@@ -2562,7 +2631,12 @@
                 },
                 layout: {
                     visibility: 'visible'
-                }
+                },
+                // MAXIMUM PERFORMANCE SETTINGS
+                maxzoom: 24,
+                minzoom: 0,
+                // Ultra-fast rendering optimizations
+                'fill-sort-key': 0  // No sorting overhead
             });
 
             // Render any preloaded paints now that the source exists
