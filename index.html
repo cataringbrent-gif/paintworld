@@ -1655,6 +1655,13 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
+                                // Queue incremental update - much faster than full redraw
+                                pendingCellUpdates.set(cellKey, {
+                                    action: paintedCells.has(cellKey) ? 'update' : 'add',
+                                    color: selectedColor,
+                                    timestamp: Date.now()
+                                });
+                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1700,6 +1707,12 @@
                             if (existingCell && existingCell.owner === USER_ID) {
                                 // INSTANT local update
                                 paintedCells.delete(cellKey);
+                                
+                                // Queue incremental update - much faster than full redraw
+                                pendingCellUpdates.set(cellKey, {
+                                    action: 'remove',
+                                    timestamp: Date.now()
+                                });
                                 
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
@@ -2136,31 +2149,53 @@
                 return cell ? cell.color : null;
         }
         
-        // High-performance batched update system
+        // High-performance incremental update system - only update changed cells
         let updatePaintedCellsRAF = null;
-        let pendingCellUpdates = new Set();
-        
+        let pendingCellUpdates = new Map(); // cellKey -> {action: 'add'|'update'|'remove', color?, timestamp}
+
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
-                
+
                 // Use RAF for smooth 60fps updates
                 if (!updatePaintedCellsRAF) {
                     updatePaintedCellsRAF = requestAnimationFrame(() => {
-                        // Batch process all pending updates
-                        const features = [];
-                        paintedCells.forEach((cell, cellKey) => {
+                        const source = map.getSource('painted-cells');
+                        const currentData = source._data || { type: 'FeatureCollection', features: [] };
+                        const features = [...currentData.features]; // Clone existing features
+
+                        // Process only pending updates - much faster than recreating everything
+                        pendingCellUpdates.forEach((update, cellKey) => {
                             const [x, y] = cellKey.split(',').map(Number);
-                            const cellFeature = generateHoverCell(x, y);
-                            cellFeature.properties.color = cell.color;
-                            features.push(cellFeature);
+
+                            // Find existing feature index
+                            const existingIndex = features.findIndex(f =>
+                                f.properties && f.properties.x === x && f.properties.y === y
+                            );
+
+                            if (update.action === 'add' || update.action === 'update') {
+                                // Add or update cell
+                                const cellFeature = generateHoverCell(x, y);
+                                cellFeature.properties.color = update.color;
+
+                                if (existingIndex >= 0) {
+                                    features[existingIndex] = cellFeature; // Update existing
+                                } else {
+                                    features.push(cellFeature); // Add new
+                                }
+                            } else if (update.action === 'remove') {
+                                // Remove cell
+                                if (existingIndex >= 0) {
+                                    features.splice(existingIndex, 1);
+                                }
+                            }
                         });
-                        
-                        // Single efficient update
-                        map.getSource('painted-cells').setData({
+
+                        // Single efficient update with minimal changes
+                        source.setData({
                             type: 'FeatureCollection',
                             features: features
                         });
-                        
+
                         updatePaintedCellsRAF = null;
                         pendingCellUpdates.clear();
                     });
