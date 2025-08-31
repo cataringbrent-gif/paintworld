@@ -25,7 +25,6 @@ interface PaintBatch {
 
 const CELL_SIZE_METERS = 20.0375
 const PAINT_BATCH_DELAY = 100 // ms
-const MAX_BATCH_SIZE = 50
 
 export default function PaintCanvas({ 
   center = [120.75754, 13.89790], 
@@ -43,15 +42,13 @@ export default function PaintCanvas({
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [isLoading, setIsLoading] = useState(true)
   
-  // Paint data
+  // Paint data - simplified for instant updates
   const [paints, setPaints] = useState<Map<string, Paint>>(new Map())
   const [pendingPaints, setPendingPaints] = useState<Map<string, PendingPaint>>(new Map())
   
   // Batching and performance
   const [paintBatch, setPaintBatch] = useState<PaintBatch>({ paints: [], deletes: [] })
   const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const lastRenderTime = useRef<number>(0)
   
   // User state
   const [userId, setUserId] = useState<string | null>(null)
@@ -228,8 +225,8 @@ export default function PaintCanvas({
         return newPaints
       })
 
-      // Schedule canvas render
-      scheduleCanvasRender()
+      // Render immediately
+      renderCanvas()
     } else if (message.type === 'delete') {
       const { x, y, owner } = message.data
       const key = getPaintKey(x, y)
@@ -242,70 +239,73 @@ export default function PaintCanvas({
         return newPaints
       })
 
-      scheduleCanvasRender()
+      renderCanvas()
     }
   }, [userId, getPaintKey])
 
-  // Schedule canvas render with requestAnimationFrame
-  const scheduleCanvasRender = useCallback(() => {
-    if (animationFrameRef.current) return
-
-    animationFrameRef.current = requestAnimationFrame(() => {
-      renderCanvas()
-      animationFrameRef.current = null
-    })
-  }, [])
-
-  // Render canvas efficiently
+  // Render canvas efficiently - simplified for instant updates
   const renderCanvas = useCallback(() => {
-    if (!ctxRef.current || !canvasRef.current) return
+    if (!ctxRef.current || !canvasRef.current || !mapRef.current) return
 
     const ctx = ctxRef.current
     const canvas = canvasRef.current
-    const now = performance.now()
-
-    // Throttle renders to 60fps max
-    if (now - lastRenderTime.current < 16) return
-    lastRenderTime.current = now
+    const map = mapRef.current
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // Render all paints
+    // Get map bounds once
+    const bounds = map.getBounds()
+    const west = bounds.getWest()
+    const south = bounds.getSouth()
+    const east = bounds.getEast()
+    const north = bounds.getNorth()
+
+    // Calculate scale factors once
+    const scaleX = canvas.width / (east - west)
+    const scaleY = canvas.height / (north - south)
+
+    // Render all paints with simplified coordinate calculation
     paints.forEach(paint => {
       if (paint.color === null) return // Skip erased pixels
       
-      const pixelX = Math.floor((paint.x * CELL_SIZE_METERS - mapRef.current!.getBounds().getWest()) / mapRef.current!.getBounds().getWest() * canvas.width)
-      const pixelY = Math.floor((paint.y * CELL_SIZE_METERS - mapRef.current!.getBounds().getSouth()) / mapRef.current!.getBounds().getSouth() * canvas.height)
+      // Simplified coordinate calculation for instant rendering
+      const pixelX = Math.floor((paint.x * CELL_SIZE_METERS - west) * scaleX)
+      const pixelY = Math.floor((north - paint.y * CELL_SIZE_METERS) * scaleY)
       
-      ctx.fillStyle = paint.color
-      ctx.fillRect(pixelX, pixelY, 1, 1)
+      // Only render if pixel is visible
+      if (pixelX >= 0 && pixelX < canvas.width && pixelY >= 0 && pixelY < canvas.height) {
+        ctx.fillStyle = paint.color
+        ctx.fillRect(pixelX, pixelY, 1, 1)
+      }
     })
 
-    // Render pending paints on top
+    // Render pending paints on top with same simplified calculation
     pendingPaints.forEach(paint => {
       if (paint.color === null) return // Skip erased pixels
       
-      const pixelX = Math.floor((paint.x * CELL_SIZE_METERS - mapRef.current!.getBounds().getWest()) / mapRef.current!.getBounds().getWest() * canvas.width)
-      const pixelY = Math.floor((paint.y * CELL_SIZE_METERS - mapRef.current!.getBounds().getSouth()) / mapRef.current!.getBounds().getSouth() * canvas.height)
+      const pixelX = Math.floor((paint.x * CELL_SIZE_METERS - west) * scaleX)
+      const pixelY = Math.floor((north - paint.y * CELL_SIZE_METERS) * scaleY)
       
-      ctx.fillStyle = paint.color
-      ctx.fillRect(pixelX, pixelY, 1, 1)
+      if (pixelX >= 0 && pixelX < canvas.width && pixelY >= 0 && pixelY < canvas.height) {
+        ctx.fillStyle = paint.color
+        ctx.fillRect(pixelX, pixelY, 1, 1)
+      }
     })
   }, [paints, pendingPaints])
 
-  // Handle painting
+  // Handle painting - OPTIMIZED FOR INSTANT FEEDBACK
   const handlePaint = useCallback(async (x: number, y: number, color: string) => {
     if (!userId || !mapRef.current) return
 
     const key = getPaintKey(x, y)
     const timestamp = Date.now()
 
-    // Optimistic update - render immediately
+    // INSTANT OPTIMISTIC UPDATE - No state batching, immediate render
     const pendingPaint: PendingPaint = { x, y, color, owner: userId, timestamp }
-    setPendingPaints(prev => new Map(prev).set(key, pendingPaint))
     
-    // Update paints state for immediate rendering
+    // Update both states immediately for instant visual feedback
+    setPendingPaints(prev => new Map(prev).set(key, pendingPaint))
     setPaints(prev => {
       const newPaints = new Map(prev)
       newPaints.set(key, {
@@ -319,28 +319,26 @@ export default function PaintCanvas({
       return newPaints
     })
 
-    // Render immediately
+    // RENDER IMMEDIATELY - No delays, no batching
     renderCanvas()
 
-    // Broadcast to other clients
-    try {
-      await paintChannel.broadcast({
-        type: 'paint',
-        data: {
-          x,
-          y,
-          color,
-          owner: userId,
-          owner_name: userName,
-          owner_avatar: userAvatar,
-          timestamp,
-        }
-      })
-    } catch (error) {
+    // Broadcast to other clients (non-blocking)
+    paintChannel.broadcast({
+      type: 'paint',
+      data: {
+        x,
+        y,
+        color,
+        owner: userId,
+        owner_name: userName,
+        owner_avatar: userAvatar,
+        timestamp,
+      }
+    }).catch(error => {
       console.error('Failed to broadcast paint:', error)
-    }
+    })
 
-    // Add to batch for database persistence
+    // Add to batch for database persistence (background)
     setPaintBatch(prev => ({
       ...prev,
       paints: [...prev.paints, {
@@ -354,14 +352,14 @@ export default function PaintCanvas({
       }]
     }))
 
-    // Schedule batch processing
+    // Schedule batch processing (background)
     if (batchTimeoutRef.current) {
       clearTimeout(batchTimeoutRef.current)
     }
     batchTimeoutRef.current = setTimeout(processPaintBatch, PAINT_BATCH_DELAY)
   }, [userId, userName, userAvatar, getPaintKey, renderCanvas])
 
-  // Process paint batch
+  // Process paint batch (background operation)
   const processPaintBatch = useCallback(async () => {
     if (paintBatch.paints.length === 0 && paintBatch.deletes.length === 0) return
 
@@ -414,7 +412,7 @@ export default function PaintCanvas({
         return newPending
       })
 
-      // Re-render to show final state
+      // Final render to show clean state
       renderCanvas()
     } catch (error) {
       console.error('Error processing paint batch:', error)
@@ -447,9 +445,6 @@ export default function PaintCanvas({
     return () => {
       if (batchTimeoutRef.current) {
         clearTimeout(batchTimeoutRef.current)
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
       }
       paintChannel.disconnect()
     }
