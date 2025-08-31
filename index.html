@@ -1431,6 +1431,9 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.delete(cellKey);
                   
+                  // INSTANT VISUAL FEEDBACK - same as hover
+                  instantPaintVisual(gridX, gridY, null);
+                  
                   // RESTORE CHARGE when erasing own paint
                   if (USER_ID && USER_CHARGES < USER_CAPACITY) {
                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
@@ -1471,6 +1474,9 @@
                   
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+                  
+                  // INSTANT VISUAL FEEDBACK - same responsiveness as hover
+                  instantPaintVisual(gridX, gridY, color);
                   
                   // INSTANT visual update - no requestAnimationFrame delay
                   updatePaintedCellsDisplay();
@@ -1655,12 +1661,8 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // Queue incremental update - much faster than full redraw
-                                pendingCellUpdates.set(cellKey, {
-                                    action: paintedCells.has(cellKey) ? 'update' : 'add',
-                                    color: selectedColor,
-                                    timestamp: Date.now()
-                                });
+                                // INSTANT VISUAL FEEDBACK - same as hover
+                                instantPaintVisual(cell.x, cell.y, selectedColor);
                                 
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
@@ -1708,11 +1710,8 @@
                                 // INSTANT local update
                                 paintedCells.delete(cellKey);
                                 
-                                // Queue incremental update - much faster than full redraw
-                                pendingCellUpdates.set(cellKey, {
-                                    action: 'remove',
-                                    timestamp: Date.now()
-                                });
+                                // INSTANT VISUAL FEEDBACK - same as hover
+                                instantPaintVisual(cell.x, cell.y, null);
                                 
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
@@ -2149,53 +2148,96 @@
                 return cell ? cell.color : null;
         }
         
-        // High-performance incremental update system - only update changed cells
+        // High-performance batched update system with instant visual feedback
         let updatePaintedCellsRAF = null;
-        let pendingCellUpdates = new Map(); // cellKey -> {action: 'add'|'update'|'remove', color?, timestamp}
-
+        let pendingCellUpdates = new Set();
+        let paintedCellsOverlay = null; // HTML overlay for instant painted cells feedback
+        let paintedCellsElements = new Map(); // cellKey -> DOM element
+        
+        // Create instant painted cells overlay (like hover but persistent)
+        function createPaintedCellsOverlay() {
+            if (paintedCellsOverlay) return paintedCellsOverlay;
+            
+            const container = map.getContainer();
+            paintedCellsOverlay = document.createElement('div');
+            paintedCellsOverlay.id = 'paintedCellsOverlay';
+            paintedCellsOverlay.style.position = 'absolute';
+            paintedCellsOverlay.style.pointerEvents = 'none';
+            paintedCellsOverlay.style.zIndex = '9500'; // Below hover but above map
+            paintedCellsOverlay.style.willChange = 'transform,width,height';
+            paintedCellsOverlay.style.transform = 'translateZ(0)';
+            paintedCellsOverlay.style.backfaceVisibility = 'hidden';
+            paintedCellsOverlay.style.perspective = '1000px';
+            
+            container.appendChild(paintedCellsOverlay);
+            return paintedCellsOverlay;
+        }
+        
+        // Add instant visual feedback for painted cell
+        function instantPaintVisual(gridX, gridY, color) {
+            if (!paintedCellsOverlay) createPaintedCellsOverlay();
+            
+            const cellKey = `${gridX},${gridY}`;
+            let cellElement = paintedCellsElements.get(cellKey);
+            
+            if (color === null) {
+                // Remove painted cell overlay
+                if (cellElement) {
+                    cellElement.remove();
+                    paintedCellsElements.delete(cellKey);
+                }
+                return;
+            }
+            
+            if (!cellElement) {
+                // Create new cell element
+                cellElement = document.createElement('div');
+                cellElement.style.position = 'absolute';
+                cellElement.style.width = '20px';
+                cellElement.style.height = '20px';
+                cellElement.style.pointerEvents = 'none';
+                cellElement.style.transformOrigin = 'center';
+                cellElement.style.willChange = 'transform';
+                paintedCellsOverlay.appendChild(cellElement);
+                paintedCellsElements.set(cellKey, cellElement);
+            }
+            
+            // Position and color the cell instantly
+            try {
+                const lngLat = { lng: gridX * CELL_SIZE_METERS - 20037508.34, lat: 20037508.34 - gridY * CELL_SIZE_METERS };
+                const point = map.project(lngLat);
+                
+                cellElement.style.left = `${point.x - 10}px`;
+                cellElement.style.top = `${point.y - 10}px`;
+                cellElement.style.backgroundColor = color;
+                cellElement.style.transform = 'translateZ(0)';
+            } catch (e) {
+                // Fallback positioning if map not ready
+                cellElement.style.display = 'none';
+            }
+        }
+        
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
-
+                
                 // Use RAF for smooth 60fps updates
                 if (!updatePaintedCellsRAF) {
                     updatePaintedCellsRAF = requestAnimationFrame(() => {
-                        const source = map.getSource('painted-cells');
-                        const currentData = source._data || { type: 'FeatureCollection', features: [] };
-                        const features = [...currentData.features]; // Clone existing features
-
-                        // Process only pending updates - much faster than recreating everything
-                        pendingCellUpdates.forEach((update, cellKey) => {
+                        // Batch process all pending updates
+                        const features = [];
+                        paintedCells.forEach((cell, cellKey) => {
                             const [x, y] = cellKey.split(',').map(Number);
-
-                            // Find existing feature index
-                            const existingIndex = features.findIndex(f =>
-                                f.properties && f.properties.x === x && f.properties.y === y
-                            );
-
-                            if (update.action === 'add' || update.action === 'update') {
-                                // Add or update cell
-                                const cellFeature = generateHoverCell(x, y);
-                                cellFeature.properties.color = update.color;
-
-                                if (existingIndex >= 0) {
-                                    features[existingIndex] = cellFeature; // Update existing
-                                } else {
-                                    features.push(cellFeature); // Add new
-                                }
-                            } else if (update.action === 'remove') {
-                                // Remove cell
-                                if (existingIndex >= 0) {
-                                    features.splice(existingIndex, 1);
-                                }
-                            }
+                            const cellFeature = generateHoverCell(x, y);
+                            cellFeature.properties.color = cell.color;
+                            features.push(cellFeature);
                         });
-
-                        // Single efficient update with minimal changes
-                        source.setData({
+                        
+                        // Single efficient update
+                        map.getSource('painted-cells').setData({
                             type: 'FeatureCollection',
                             features: features
                         });
-
+                        
                         updatePaintedCellsRAF = null;
                         pendingCellUpdates.clear();
                     });
@@ -2337,10 +2379,24 @@
             }
         }
 
-        // Initialize map layers when ready
-        map.on('load', () => {
-            console.log('Map loaded successfully');
-            initializeMapLayers();
+        // Update painted cells positions when map moves
+        map.on('move', () => {
+            if (!paintedCellsElements.size) return;
+            
+            // Reposition all painted cell overlays
+            paintedCellsElements.forEach((element, cellKey) => {
+                const [gridX, gridY] = cellKey.split(',').map(Number);
+                try {
+                    const lngLat = { lng: gridX * CELL_SIZE_METERS - 20037508.34, lat: 20037508.34 - gridY * CELL_SIZE_METERS };
+                    const point = map.project(lngLat);
+                    
+                    element.style.left = `${point.x - 10}px`;
+                    element.style.top = `${point.y - 10}px`;
+                } catch (e) {
+                    // Hide if positioning fails
+                    element.style.display = 'none';
+                }
+            });
         });
         
         function initializeMapLayers() {
