@@ -1411,7 +1411,7 @@
             // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
             let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
             let paintBatchTimeout = null;
-            const PAINT_BATCH_DELAY = 1; // ms - 0.001 second batching for maximum responsiveness
+            const PAINT_BATCH_DELAY = 0; // ms - immediate batching for maximum responsiveness
             
             function paintCell(gridX, gridY, color) {
               const cellKey = `${gridX},${gridY}`;
@@ -1445,6 +1445,11 @@
                   updatePaintedCellsDisplay();
                   updateCellCounter();
                   
+                  // Force immediate map repaint
+                  if (map.isStyleLoaded()) {
+                      map.triggerRepaint();
+                  }
+                  
                   // Queue DB delete with charge restoration
                   paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
                   schedulePaintBatch();
@@ -1475,6 +1480,11 @@
                   // INSTANT visual update - no requestAnimationFrame delay
                   updatePaintedCellsDisplay();
                   updateCellCounter();
+                  
+                  // Force immediate map repaint
+                  if (map.isStyleLoaded()) {
+                      map.triggerRepaint();
+                  }
                   
                   // Spend charge locally
                   if (USER_ID && spendCharge) {
@@ -1669,9 +1679,15 @@
                         
                         // Single visual update for all cells
                         if (hasNewPaints) {
+                            // Force immediate visual update
                             updatePaintedCellsDisplay();
                             updateCellCounter();
                             schedulePaintBatch();
+                            
+                            // Force map repaint to ensure changes are visible
+                            if (map.isStyleLoaded()) {
+                                map.triggerRepaint();
+                            }
                         }
                     } else {
                         // First paint - just paint current cell
@@ -1723,10 +1739,16 @@
                         
                         // Single visual update for all cells
                         if (hasNewErases) {
+                            // Force immediate visual update
                             updatePaintedCellsDisplay();
                             updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
+                            
+                            // Force map repaint to ensure changes are visible
+                            if (map.isStyleLoaded()) {
+                                map.triggerRepaint();
+                            }
                         }
                     } else {
                         // First erase - just erase current cell
@@ -2120,18 +2142,39 @@
         }
         
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
+                if (!map.getSource('painted-cells')) {
+                    console.warn('painted-cells source not available yet');
+                    return;
+                }
+                
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
                     const cellFeature = generateHoverCell(x, y);
                     cellFeature.properties.color = cell.color;
+                    cellFeature.properties.owner = cell.owner;
+                    cellFeature.properties.owner_name = cell.owner_name;
+                    cellFeature.properties.owner_avatar = cell.owner_avatar;
                     features.push(cellFeature);
                 });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
+                
+                // Force immediate update of the map source
+                const source = map.getSource('painted-cells');
+                if (source) {
+                    try {
+                        source.setData({
+                            type: 'FeatureCollection',
+                            features: features
+                        });
+                        
+                        // Debug logging for painting
+                        if (features.length > 0) {
+                            console.log(`Updated display with ${features.length} painted cells`);
+                        }
+                    } catch (error) {
+                        console.error('Error updating painted cells display:', error);
+                    }
+                }
         }
         
         function updateCellCounter() {
@@ -2153,6 +2196,14 @@
         function isPaletteVisible() {
             const paletteEl = document.getElementById('colorPalette');
             return !!paletteEl && paletteEl.classList.contains('visible');
+        }
+        
+        // Check if the map is ready for painting
+        function isMapReadyForPainting() {
+            return map.isStyleLoaded() && 
+                   map.getSource('painted-cells') && 
+                   isPaintMode && 
+                   isPaletteVisible();
         }
 
         // Get cell center lng/lat for a grid cell
@@ -2235,12 +2286,18 @@
                 return;
             }
 
-            // Only allow painting if a cell is highlighted (hover active)
+            // Only allow painting if a cell is highlighted (hover active) and map is ready
             if (!currentHoveredCell) return;
+            if (!isMapReadyForPainting()) {
+                console.warn('Map not ready for painting');
+                return;
+            }
 
             if (e.originalEvent.button === 0) { // Left click - paint
+                console.log(`Painting cell ${gridCoords.x},${gridCoords.y} with color ${selectedColor}`);
                 paintCell(gridCoords.x, gridCoords.y, selectedColor);
             } else if (e.originalEvent.button === 2) { // Right click - delete
+                console.log(`Erasing cell ${gridCoords.x},${gridCoords.y}`);
                 paintCell(gridCoords.x, gridCoords.y, null);
             }
 
@@ -2636,6 +2693,9 @@
                 paintButton.style.display = 'flex';
                 if (colorPalette.classList.contains('visible')) {
                     hasAutoZoomedThisSession = false;
+                    console.log('Paint mode enabled, palette visible');
+                } else {
+                    console.log('Paint mode disabled, palette hidden');
                 }
             });
             
