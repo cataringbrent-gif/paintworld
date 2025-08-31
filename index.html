@@ -1267,6 +1267,8 @@
               if (error) { console.error('Initial load error', error); return; }
               paintedCells.clear();
               for (const row of data) mergeRow(row);
+              
+              // Force immediate display of all loaded cells
               updatePaintedCellsDisplay();
               updateCellCounter();
             }
@@ -1283,6 +1285,8 @@
               if (data && data.length) {
                 for (const row of data) mergeRow(row);
                 lastSeen = data[data.length - 1].updated_at;
+                
+                // Force immediate display of new cells
                 updatePaintedCellsDisplay();
                 updateCellCounter();
               }
@@ -1411,7 +1415,7 @@
             // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
             let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
             let paintBatchTimeout = null;
-            const PAINT_BATCH_DELAY = 0; // ms - immediate batching for maximum responsiveness
+            const PAINT_BATCH_DELAY = 1; // ms - 0.001 second batching for maximum responsiveness
             
             function paintCell(gridX, gridY, color) {
               const cellKey = `${gridX},${gridY}`;
@@ -1445,11 +1449,6 @@
                   updatePaintedCellsDisplay();
                   updateCellCounter();
                   
-                  // Force immediate map repaint
-                  if (map.isStyleLoaded()) {
-                      map.triggerRepaint();
-                  }
-                  
                   // Queue DB delete with charge restoration
                   paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
                   schedulePaintBatch();
@@ -1480,11 +1479,6 @@
                   // INSTANT visual update - no requestAnimationFrame delay
                   updatePaintedCellsDisplay();
                   updateCellCounter();
-                  
-                  // Force immediate map repaint
-                  if (map.isStyleLoaded()) {
-                      map.triggerRepaint();
-                  }
                   
                   // Spend charge locally
                   if (USER_ID && spendCharge) {
@@ -1679,15 +1673,9 @@
                         
                         // Single visual update for all cells
                         if (hasNewPaints) {
-                            // Force immediate visual update
                             updatePaintedCellsDisplay();
                             updateCellCounter();
                             schedulePaintBatch();
-                            
-                            // Force map repaint to ensure changes are visible
-                            if (map.isStyleLoaded()) {
-                                map.triggerRepaint();
-                            }
                         }
                     } else {
                         // First paint - just paint current cell
@@ -1739,16 +1727,10 @@
                         
                         // Single visual update for all cells
                         if (hasNewErases) {
-                            // Force immediate visual update
                             updatePaintedCellsDisplay();
                             updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
-                            
-                            // Force map repaint to ensure changes are visible
-                            if (map.isStyleLoaded()) {
-                                map.triggerRepaint();
-                            }
                         }
                     } else {
                         // First erase - just erase current cell
@@ -2142,39 +2124,59 @@
         }
         
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) {
-                    console.warn('painted-cells source not available yet');
+                // Check zoom level first - only show cells when zoomed in enough
+                const vc = getVisibleGridCells();
+                if (vc.x > 4000 || vc.y > 4000) {
+                    // Too zoomed out - hide painted cells immediately
+                    if (map.getSource('painted-cells')) {
+                        try {
+                            map.getSource('painted-cells').setData({
+                                type: 'FeatureCollection',
+                                features: []
+                            });
+                        } catch (e) {
+                            // Ignore errors - map might not be ready
+                        }
+                    }
                     return;
                 }
                 
+                // We're in the visible range - show ALL painted cells INSTANTLY
                 const features = [];
                 paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
                     const cellFeature = generateHoverCell(x, y);
                     cellFeature.properties.color = cell.color;
-                    cellFeature.properties.owner = cell.owner;
-                    cellFeature.properties.owner_name = cell.owner_name;
-                    cellFeature.properties.owner_avatar = cell.owner_avatar;
                     features.push(cellFeature);
                 });
                 
-                // Force immediate update of the map source
-                const source = map.getSource('painted-cells');
-                if (source) {
+                // INSTANT update - no delays, no retries, no timeouts
+                if (map.getSource('painted-cells')) {
                     try {
-                        source.setData({
+                        map.getSource('painted-cells').setData({
                             type: 'FeatureCollection',
                             features: features
                         });
-                        
-                        // Debug logging for painting
-                        if (features.length > 0) {
-                            console.log(`Updated display with ${features.length} painted cells`);
-                        }
                     } catch (error) {
-                        console.error('Error updating painted cells display:', error);
+                        // If map source fails, try ONE more time immediately
+                        if (map.getSource('painted-cells')) {
+                            try {
+                                map.getSource('painted-cells').setData({
+                                    type: 'FeatureCollection',
+                                    features: features
+                                });
+                            } catch (e) {
+                                // If it still fails, just ignore - don't queue retries
+                                console.warn('Failed to display painted cells:', e);
+                            }
+                        }
                     }
                 }
+        }
+        
+        // Force refresh function for immediate display
+        function forceRefreshPaintedCells() {
+            updatePaintedCellsDisplay();
         }
         
         function updateCellCounter() {
@@ -2196,14 +2198,6 @@
         function isPaletteVisible() {
             const paletteEl = document.getElementById('colorPalette');
             return !!paletteEl && paletteEl.classList.contains('visible');
-        }
-        
-        // Check if the map is ready for painting
-        function isMapReadyForPainting() {
-            return map.isStyleLoaded() && 
-                   map.getSource('painted-cells') && 
-                   isPaintMode && 
-                   isPaletteVisible();
         }
 
         // Get cell center lng/lat for a grid cell
@@ -2286,18 +2280,12 @@
                 return;
             }
 
-            // Only allow painting if a cell is highlighted (hover active) and map is ready
+            // Only allow painting if a cell is highlighted (hover active)
             if (!currentHoveredCell) return;
-            if (!isMapReadyForPainting()) {
-                console.warn('Map not ready for painting');
-                return;
-            }
 
             if (e.originalEvent.button === 0) { // Left click - paint
-                console.log(`Painting cell ${gridCoords.x},${gridCoords.y} with color ${selectedColor}`);
                 paintCell(gridCoords.x, gridCoords.y, selectedColor);
             } else if (e.originalEvent.button === 2) { // Right click - delete
-                console.log(`Erasing cell ${gridCoords.x},${gridCoords.y}`);
                 paintCell(gridCoords.x, gridCoords.y, null);
             }
 
@@ -2398,29 +2386,31 @@
                     visibility: 'visible'
                 }
             });
-
-            // Render any preloaded paints now that the source exists
-            updatePaintedCellsDisplay();
-
+            
             // Initial grid update
             updateGridVisibility();
             updateGrid();
-            // Ensure painted layer visibility respects 4000x4000 threshold on load
-            updatePaintedCellsVisibility();
             // Update zoom hint visibility on load
             updateZoomHintVisibility();
+            
+            // Force painted cells to display IMMEDIATELY when map is ready
+            // No delays, no timeouts - instant display
+            updatePaintedCellsDisplay();
+            
+            // Also ensure painted cells are displayed when the source becomes available
+            // This handles cases where the source isn't ready yet
+            let sourceCheckInterval = setInterval(() => {
+                if (map.getSource('painted-cells')) {
+                    clearInterval(sourceCheckInterval);
+                    updatePaintedCellsDisplay();
+                }
+            }, 10); // Check every 10ms until source is ready
         });
 
-        // Toggle painted layer visibility depending on visible grid cells
+        // Painted cells are always visible - just update their data based on zoom level
         function updatePaintedCellsVisibility() {
-            if (!map.getLayer('painted-cells')) return;
-            const vc = getVisibleGridCells();
-            const visible = vc.x <= 4000 && vc.y <= 4000;
-            const current = map.getLayoutProperty('painted-cells', 'visibility');
-            const desired = visible ? 'visible' : 'none';
-            if (current !== desired) {
-                map.setLayoutProperty('painted-cells', 'visibility', desired);
-            }
+            // Always keep the layer visible - just update the data
+            updatePaintedCellsDisplay();
         }
 
         // Show/hide zoom hint button when viewport exceeds 4000 x 4000 cells
@@ -2449,10 +2439,19 @@
         map.on('zoom', () => {
             updateGridVisibility();
             updateGrid();
-            updatePaintedCellsVisibility();
             updateZoomHintVisibility();
-            // Throttled notice when zoomed out beyond painting capability
+            
+            // Always update painted cells immediately on zoom - no conditions
+            updatePaintedCellsDisplay();
+            
+            // Force additional update when zooming into visible range
             const vc = getVisibleGridCells();
+            if (vc.x <= 4000 && vc.y <= 4000) {
+                // We're now in the visible range - force immediate display
+                updatePaintedCellsDisplay();
+            }
+            
+            // Throttled notice when zoomed out beyond painting capability
             if (vc.x > 4000 || vc.y > 4000) {
                 const now = Date.now();
                 if (now - lastZoomNoticeTime > ZOOM_NOTICE_COOLDOWN) {
@@ -2473,19 +2472,23 @@
 
         // Also update on move to reflect viewport changes without zoom change
         map.on('move', () => {
-            updatePaintedCellsVisibility();
             updateZoomHintVisibility();
             // Keep HTML overlay aligned with current hovered cell during pan/zoom
             if (currentHoveredCell) {
                 updateHtmlHighlight(currentHoveredCell.x, currentHoveredCell.y);
             }
+            
+            // Always update painted cells on move - no conditions
+            updatePaintedCellsDisplay();
         });
 
         // After interactions settle, re-evaluate to avoid threshold flicker
         map.on('moveend', () => {
             isMapMoving = false;
-            updatePaintedCellsVisibility();
             updateZoomHintVisibility();
+            
+            // Always update painted cells when movement stops
+            updatePaintedCellsDisplay();
         });
 
         map.on('zoomend', () => {
@@ -2693,9 +2696,6 @@
                 paintButton.style.display = 'flex';
                 if (colorPalette.classList.contains('visible')) {
                     hasAutoZoomedThisSession = false;
-                    console.log('Paint mode enabled, palette visible');
-                } else {
-                    console.log('Paint mode disabled, palette hidden');
                 }
             });
             
