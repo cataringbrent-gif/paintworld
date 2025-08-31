@@ -974,7 +974,16 @@
             }
 
             const supabase = (cfg?.url && cfg?.key && window.supabase)
-              ? window.supabase.createClient(cfg.url, cfg.key)
+              ? window.supabase.createClient(cfg.url, cfg.key, {
+                realtime: {
+                  params: {
+                    eventsPerSecond: 100, // Higher event rate for realtime updates
+                    headers: {
+                      'X-Client-Info': 'paintworld/1.0.0'
+                    }
+                  }
+                }
+              })
               : null;
 
             // Current user info (from Supabase auth)
@@ -1260,6 +1269,21 @@
 
             async function initialLoad() {
               if (!supabase) return;
+              const inserts = [];
+              for (let x = 0; x < MAP_WIDTH; x++) {
+                for (let y = 0; y < MAP_HEIGHT; y++) {
+                  inserts.push({ x, y, color: null });
+                }
+              }
+              // Insert new paints with UPSERT to handle conflicts
+              const { data: newPaints, error: insertError } = await supabase
+                .from('paints')
+                .upsert(inserts, { 
+                    onConflict: 'grid_x,grid_y',
+                    ignoreDuplicates: false
+                })
+                .select();
+              if (insertError) { console.error('Initial load insert error', insertError); return; }
               const { data, error } = await supabase
                 .from('paints')
                 .select('*')
@@ -1294,6 +1318,7 @@
               renderAuthUI(user);
               if (user) { await loadOrInitUserPaints(); } else { updatePaintButtonUI(); }
               await initialLoad();
+              setupRealtime();
               // Start polling every 2s until Realtime is available
               setInterval(pollUpdates, 2000);
             })();
@@ -1408,105 +1433,91 @@
               });
             });
 
-            // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes - INSTANT VISUAL FEEDBACK VERSION
+            // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
             let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
             let paintBatchTimeout = null;
             const PAINT_BATCH_DELAY = 1; // ms - 0.001 second batching for maximum responsiveness
             
-            function paintCellInstantly(gridX, gridY, color) {
-                const cellKey = `${gridX},${gridY}`;
-                const cell = paintedCells.get(cellKey);
-
-                if (!supabase || !USER_ID) {
-                    showNotification('Storage not configured yet');
-                    return;
-                }
-
-                if (color === null) {
-                    if (!cell) return; // nothing to erase
-                    if (cell.owner !== USER_ID) {
-                        showNotification('You can only delete your own paint.');
-                        return;
-                    }
-                    // INSTANT local update
-                    paintedCells.delete(cellKey);
-                    
-                    // Restore charge immediately
-                    if (USER_ID && USER_CHARGES < USER_CAPACITY) {
-                        USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                        if (USER_CHARGES >= USER_CAPACITY) {
-                            lastRefillAt = null;
-                        }
-                        updatePaintButtonUI();
-                    }
-                    
-                    // INSTANT HTML OVERLAY FEEDBACK - Same responsiveness as hover
-                    removeInstantPaint(gridX, gridY);
-                    
-                    // Queue for database
-                    paintQueue.set(cellKey, { 
-                        gridX, gridY, color: null, 
-                        restoreCharge: true, 
-                        timestamp: Date.now() 
-                    });
-                    
-                } else {
-                    // Require charges for authenticated users
-                    if (USER_ID) {
-                        if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
-                    }
-                    if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
-                        showNotification('Too many painted cells');
-                        return;
-                    }
-                    
-                    // If repainting a cell we already own:
-                    let spendCharge = true;
-                    if (cell && USER_ID && cell.owner === USER_ID) {
-                        // If color is unchanged, skip any write and do not spend
-                        if (cell.color === color) {
-                            updatePaintButtonUI();
-                            return;
-                        }
-                        // Allow color change without spending a charge
-                        spendCharge = false;
-                    }
-                    
-                    // INSTANT local update
-                    paintedCells.set(cellKey, { 
-                        color, 
-                        owner: USER_ID, 
-                        owner_name: USER_NAME, 
-                        owner_avatar: USER_AVATAR 
-                    });
-                    
-                    // INSTANT HTML OVERLAY FEEDBACK - Same responsiveness as hover
-                    addInstantPaint(gridX, gridY, color);
-                    
-                    // Spend charge locally
-                    if (USER_ID && spendCharge) {
-                        USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                        lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                        updatePaintButtonUI();
-                    }
-                    
-                    // Queue for database
-                    paintQueue.set(cellKey, { 
-                        gridX, gridY, color, 
-                        spendCharge, 
-                        timestamp: Date.now() 
-                    });
-                }
-                
-                // INSTANT VISUAL UPDATE - Force immediate display
-                updatePaintedCellsDisplay();
-                updateCellCounter();
-                schedulePaintBatch();
-            }
-            
             function paintCell(gridX, gridY, color) {
-                // Fallback to old method if needed
-                paintCellInstantly(gridX, gridY, color);
+              const cellKey = `${gridX},${gridY}`;
+              const cell = paintedCells.get(cellKey);
+
+              if (!supabase || !USER_ID) {
+                showNotification('Storage not configured yet');
+                return;
+              }
+
+              if (color === null) {
+                  if (!cell) return; // nothing to erase
+                  if (cell.owner !== USER_ID) {
+                      showNotification('You can only delete your own paint.');
+                      return;
+                  }
+                  // INSTANT local update - IMMEDIATE visual feedback
+                  paintedCells.delete(cellKey);
+                  
+                  // RESTORE CHARGE when erasing own paint
+                  if (USER_ID && USER_CHARGES < USER_CAPACITY) {
+                    USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
+                    // Clear cooldown if we're back at capacity
+                    if (USER_CHARGES >= USER_CAPACITY) {
+                      lastRefillAt = null;
+                    }
+                    updatePaintButtonUI();
+                  }
+                  
+                  // INSTANT visual update - no requestAnimationFrame delay
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Queue DB delete with charge restoration
+                  paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
+                  schedulePaintBatch();
+                  
+                  // Mark cell as dirty for rendering
+                  markDirty(gridX, gridY);
+              } else {
+                  // Require charges for authenticated users
+                  if (USER_ID) {
+                    if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
+                  }
+                  if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
+                      showNotification();
+                      return;
+                  }
+                  // If repainting a cell we already own:
+                  let spendCharge = true;
+                  if (cell && USER_ID && cell.owner === USER_ID) {
+                    // If color is unchanged, skip any write and do not spend
+                    if (cell.color === color) {
+                      updatePaintButtonUI();
+                      return;
+                    }
+                    // Allow color change without spending a charge
+                    spendCharge = false;
+                  }
+                  
+                  // INSTANT local update - IMMEDIATE visual feedback
+                  paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+                  
+                  // INSTANT visual update - no requestAnimationFrame delay
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Spend charge locally
+                  if (USER_ID && spendCharge) {
+                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                    updatePaintButtonUI();
+                  }
+                  
+                  // Queue DB write
+                  paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
+                  schedulePaintBatch();
+                  
+                  // Mark cell as dirty for rendering
+                  markDirty(gridX, gridY);
+              }
             }
             
             function schedulePaintBatch() {
@@ -1514,633 +1525,172 @@
               paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
             }
             
-            async function processPaintBatch() {
-              if (paintQueue.size === 0) return;
-              
-              const batch = Array.from(paintQueue.values());
-              paintQueue.clear();
-              
-              // Process deletes
-              const deletes = batch.filter(p => p.color === null);
-              if (deletes.length > 0) {
-                for (const del of deletes) {
-                  await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
-                }
+            async function processBatchChunk(chunk) {
+                // Process a chunk of paint operations
+                const inserts = [];
+                const deletes = [];
+                let chargeSpends = 0;
                 
-                // Update charges for deletions that restore charges
-                const chargeRestores = deletes.filter(p => p.restoreCharge).length;
-                if (chargeRestores > 0) {
-                  await supabase.from('user_paints').update({
-                    charges: USER_CHARGES,
-                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                    capacity: USER_CAPACITY
-                  }).eq('user_id', USER_ID);
-                }
-              }
-              
-              // Process paints
-              const paints = batch.filter(p => p.color !== null);
-              if (paints.length > 0) {
-                const upserts = paints.map(p => ({
-                  x: p.gridX, y: p.gridY, color: p.color,
-                  owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
-                }));
-                await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
-                
-                // Update charges in batch
-                const chargeSpends = paints.filter(p => p.spendCharge).length;
-                if (chargeSpends > 0) {
-                  await supabase.from('user_paints').update({
-                    charges: USER_CHARGES,
-                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                    capacity: USER_CAPACITY
-                  }).eq('user_id', USER_ID);
-                }
-              }
-            }
-            const map = new maplibregl.Map({
-                container: 'map',
-                style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
-                center: [120.75754, 13.89790],
-                zoom: 7.3,
-                dragRotate: false
-            });
-
-
-
-        const CELL_SIZE_METERS = 20.0375; // 20.0375m × 20.0375m cells (exactly 2,000,000 × 2,000,000 cells worldwide)
-        const HOVER_THRESHOLD = 4000; // Show hover when viewport has 4000x4000 cells or fewer
-        
-        
-        // Painting system variables
-        const PAINTING_THRESHOLD = 1000; // Only allow painting when visible cells <= 1000x1000
-        const MAX_CELLS = 10000; // Maximum number of cells that can be painted
-        let currentHoveredCell = null;
-        let gridVisible = false;
-        let isPaintingEnabled = false;
-        let isPaintMode = false; // User must enable paint mode via paint button
-        let selectedColor = '#FF4500'; // Default color
-        let isSpacePressed = false; // Track if spacebar is held down
-        let isRightMouseDown = false; // Track if right mouse button is held down
-        let defaultNotificationText = null; // Store default notification text
-        let lastZoomNoticeTime = 0; // throttle zoom-out notices
-        const ZOOM_NOTICE_COOLDOWN = 1500; // ms
-        let lastSelectedCell = null; // Remember last painted/selected cell
-        let isAutoZooming = false; // Prevent recursive zoom triggers
-        let hasAutoZoomedThisSession = false; // Only auto-zoom once per palette open
-
-        // INSTANT HIGHLIGHTING SYSTEM - Works immediately on page load
-        let lastMouseX = 0;
-        let lastMouseY = 0;
-        let lastPaintedCell = null; // Track last painted cell for interpolation
-        let hoverOverlayEl = null; // HTML overlay for hover highlight (map-independent)
-        
-        function updateHighlight() {
-            // Direct coordinate calculation that works even before map loads
-            try {
-                let lngLat;
-                
-                // Try map.unproject first (fastest when map is loaded)
-                try {
-                    lngLat = map.unproject([lastMouseX, lastMouseY]);
-                } catch (e) {
-                    // Fallback: Manual coordinate calculation when map isn't ready
-                    const mapContainer = map.getContainer();
-                    const rect = mapContainer.getBoundingClientRect();
-                    const mapWidth = rect.width;
-                    const mapHeight = rect.height;
-                    
-                    // Get current map center and zoom (or use defaults if not available)
-                    let center, zoom;
-                    try {
-                        center = map.getCenter();
-                        zoom = map.getZoom();
-                    } catch (e) {
-                        // Use initial map state
-                        center = { lng: 0, lat: 0 };
-                        zoom = 2;
-                    }
-                    
-                    // Calculate lng/lat from mouse position manually
-                    const scale = 256 * Math.pow(2, zoom);
-                    const centerX = (center.lng + 180) / 360 * scale;
-                    const centerY = (1 - Math.log(Math.tan(center.lat * Math.PI / 180) + 1 / Math.cos(center.lat * Math.PI / 180)) / Math.PI) / 2 * scale;
-                    
-                    const mouseOffsetX = lastMouseX - mapWidth / 2;
-                    const mouseOffsetY = lastMouseY - mapHeight / 2;
-                    
-                    const pixelX = centerX + mouseOffsetX;
-                    const pixelY = centerY + mouseOffsetY;
-                    
-                    const lng = (pixelX / scale) * 360 - 180;
-                    const n = Math.PI - 2 * Math.PI * (pixelY / scale);
-                    const lat = 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-                    
-                    lngLat = { lng, lat };
-                }
-                
-                // Convert to Web Mercator
-                const x = lngLat.lng * 20037508.34 / 180;
-                const y = Math.log(Math.tan((90 + lngLat.lat) * Math.PI / 360)) / (Math.PI / 180);
-                const yMercator = y * 20037508.34 / 180;
-                
-                // Convert to grid coordinates
-                const gridX = Math.floor((x + 20037508.34) / CELL_SIZE_METERS);
-                const gridY = Math.floor((yMercator + 20037508.34) / CELL_SIZE_METERS);
-                const clampedX = Math.max(0, Math.min(1999999, gridX));
-                const clampedY = Math.max(0, Math.min(1999999, gridY));
-                
-                // Always update immediately - no cell comparison
-                currentHoveredCell = { x: clampedX, y: clampedY };
-                
-                // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - Instant visual updates
-                if (isSpacePressed && selectedColor) {
-                    const currentCell = { x: clampedX, y: clampedY };
-                    
-                    if (lastPaintedCell) {
-                        // Paint all cells between last and current position
-                        const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
-                        
-                        // INSTANT visual updates - no database calls in loop
-                        let hasNewPaints = false;
-                        for (const cell of interpolatedCells) {
-                            const cellKey = `${cell.x},${cell.y}`;
-                            const existingCell = paintedCells.get(cellKey);
-                        if (!existingCell || existingCell.color !== selectedColor) {
-                            // INSTANT PAINT - Use the new instant function
-                            paintCellInstantly(cell.x, cell.y, selectedColor);
-                            hasNewPaints = true;
-                        }
-                        }
-                        
-                        // Single visual update for all cells
-                        if (hasNewPaints) {
-                            updatePaintedCellsDisplay();
-                            updateCellCounter();
-                            schedulePaintBatch();
-                        }
+                for (const paint of chunk) {
+                    if (paint.color === null) {
+                        deletes.push(paint);
+                        if (paint.restoreCharge) chargeSpends++;
                     } else {
-                        // First paint - use instant function
-                        const cellKey = `${clampedX},${clampedY}`;
-                        const existingCell = paintedCells.get(cellKey);
-                        if (!existingCell || existingCell.color !== selectedColor) {
-                            paintCellInstantly(clampedX, clampedY, selectedColor);
-                        }
-                    }
-                    lastPaintedCell = currentCell;
-                }
-                
-                // ULTRA-FAST SWIPE ERASING WITH INTERPOLATION - Instant visual updates
-                if (isRightMouseDown) {
-                    const currentCell = { x: clampedX, y: clampedY };
-                    
-                    if (lastPaintedCell) {
-                        // Erase all cells between last and current position
-                        const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
-                        
-                        // INSTANT visual updates - no database calls in loop
-                        let hasNewErases = false;
-                        for (const cell of interpolatedCells) {
-                            const cellKey = `${cell.x},${cell.y}`;
-                            const existingCell = paintedCells.get(cellKey);
-                            if (existingCell && existingCell.owner === USER_ID) {
-                                // INSTANT local update
-                                paintedCells.delete(cellKey);
-                                
-                                // Restore charge immediately
-                                if (USER_CHARGES < USER_CAPACITY) {
-                                    USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                                    if (USER_CHARGES === USER_CAPACITY) {
-                                        lastRefillAt = null;
-                                    }
-                                }
-                                
-                                // Queue for database (no await)
-                                paintQueue.set(cellKey, { 
-                                    gridX: cell.x, 
-                                    gridY: cell.y, 
-                                    color: null, 
-                                    spendCharge: false, 
-                                    timestamp: Date.now() 
-                                });
-                                hasNewErases = true;
-                            }
-                        }
-                        
-                        // Single visual update for all cells
-                        if (hasNewErases) {
-                            updatePaintedCellsDisplay();
-                            updateCellCounter();
-                            updateChargesDisplay();
-                            schedulePaintBatch();
-                        }
-                    } else {
-                        // First erase - use instant function
-                        const cellKey = `${clampedX},${clampedY}`;
-                        if (paintedCells.has(cellKey)) {
-                            paintCellInstantly(clampedX, clampedY, null);
-                        }
-                    }
-                    lastPaintedCell = currentCell;
-                }
-                
-                // INSTANT HTML OVERLAY HIGHLIGHTING - Zero map mutations
-                updateHtmlHighlight(clampedX, clampedY);
-            } catch (e) {
-                // Complete fallback - still track mouse position
-                currentHoveredCell = { x: 1000000, y: 1000000 }; // Center of grid as fallback
-            }
-        }
-
-        // HTML hover overlay helpers (map-independent)
-        function createHoverOverlay() {
-            try {
-                const container = map.getContainer();
-                let overlay = container.querySelector('#hoverOverlay');
-                if (!overlay) {
-                    overlay = document.createElement('div');
-                    overlay.id = 'hoverOverlay';
-                    overlay.style.position = 'absolute';
-                    overlay.style.pointerEvents = 'none';
-                    overlay.style.zIndex = '9999';
-                    overlay.style.border = 'none';
-                    overlay.style.boxShadow = 'none';
-                    overlay.style.willChange = 'transform,width,height';
-                    overlay.style.transform = 'translateZ(0)'; // Force GPU acceleration
-                    overlay.style.backfaceVisibility = 'hidden'; // Additional GPU optimization
-                    overlay.style.perspective = '1000px'; // Enable 3D acceleration
-                    
-                    // Create SVG corner brackets as background image - more transparent L-shapes
-                    const svgCorners = `
-                        <svg width="100%" height="100%" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
-                            <!-- Top-left L - White outer -->
-                            <path d="M0 0 L0 35 L8 35 L8 8 L35 8 L35 0 Z" fill="rgba(255,255,255,0.5)"/>
-                            <!-- Top-left L - Black inner -->
-                            <path d="M8 8 L8 35 L16 35 L16 16 L35 16 L35 8 Z" fill="rgba(0,0,0,0.3)"/>
-                            
-                            <!-- Top-right L - White outer -->
-                            <path d="M100 0 L100 35 L92 35 L92 8 L65 8 L65 0 Z" fill="rgba(255,255,255,0.5)"/>
-                            <!-- Top-right L - Black inner -->
-                            <path d="M92 8 L92 35 L84 35 L84 16 L65 16 L65 8 Z" fill="rgba(0,0,0,0.3)"/>
-                            
-                            <!-- Bottom-left L - White outer -->
-                            <path d="M0 100 L0 65 L8 65 L8 92 L35 92 L35 100 Z" fill="rgba(255,255,255,0.5)"/>
-                            <!-- Bottom-left L - Black inner -->
-                            <path d="M8 92 L8 65 L16 65 L16 84 L35 84 L35 92 Z" fill="rgba(0,0,0,0.3)"/>
-                            
-                            <!-- Bottom-right L - White outer -->
-                            <path d="M100 100 L100 65 L92 65 L92 92 L65 92 L65 100 Z" fill="rgba(255,255,255,0.5)"/>
-                            <!-- Bottom-right L - Black inner -->
-                            <path d="M92 92 L92 65 L84 65 L84 84 L65 84 L65 92 Z" fill="rgba(0,0,0,0.3)"/>
-                        </svg>
-                    `;
-                    
-                    const svgDataUri = 'data:image/svg+xml;base64,' + btoa(svgCorners);
-                    overlay.style.backgroundImage = `url("${svgDataUri}")`;
-                    overlay.style.backgroundSize = '100% 100%';
-                    overlay.style.backgroundRepeat = 'no-repeat';
-                    overlay.style.backgroundPosition = 'center';
-                    
-                    container.appendChild(overlay);
-                }
-                hoverOverlayEl = overlay;
-            } catch (e) {
-                // ignore
-            }
-        }
-
-        function updateHtmlHighlight(gridX, gridY) {
-            if (!hoverOverlayEl) createHoverOverlay();
-            if (!hoverOverlayEl) return;
-            
-            // Check if viewport has too many cells - hide highlight when zoomed out
-            try {
-                const visibleCells = getVisibleGridCells();
-                const totalVisibleCells = visibleCells.x * visibleCells.y;
-                if (totalVisibleCells > HOVER_THRESHOLD * HOVER_THRESHOLD) {
-                    hoverOverlayEl.style.display = 'none';
-                    return;
-                }
-            } catch (e) {
-                // If we can't calculate, assume we should show it
-            }
-            
-            try {
-                // Compute cell corners in EPSG:3857 then convert to lng/lat
-                const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
-                const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
-                const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
-                const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
-
-                const corner1 = fromWebMercator(mercatorX1, mercatorY1); // top-left
-                const corner3 = fromWebMercator(mercatorX2, mercatorY2); // bottom-right
-
-                // Project to screen (read-only)
-                const p1 = map.project([corner1.lng, corner1.lat]);
-                const p3 = map.project([corner3.lng, corner3.lat]);
-
-                const left = Math.min(p1.x, p3.x);
-                const top = Math.min(p1.y, p3.y);
-                const width = Math.max(1, Math.abs(p3.x - p1.x));
-                const height = Math.max(1, Math.abs(p3.y - p1.y));
-
-                hoverOverlayEl.style.transform = `translate(${left}px, ${top}px)`;
-                hoverOverlayEl.style.width = `${width}px`;
-                hoverOverlayEl.style.height = `${height}px`;
-                hoverOverlayEl.style.display = 'block';
-            } catch (e) {
-                // If projection unavailable (very early), show tiny fallback at mouse
-                const size = 6;
-                const left = lastMouseX - size / 2;
-                const top = lastMouseY - size / 2;
-                hoverOverlayEl.style.transform = `translate(${left}px, ${top}px)`;
-                hoverOverlayEl.style.width = `${size}px`;
-                hoverOverlayEl.style.height = `${size}px`;
-                hoverOverlayEl.style.display = 'block';
-            }
-        }
-
-        // Bresenham's line algorithm - get all cells between two points
-        function getLineCells(x0, y0, x1, y1) {
-            const cells = [];
-            const dx = Math.abs(x1 - x0);
-            const dy = Math.abs(y1 - y0);
-            const sx = x0 < x1 ? 1 : -1;
-            const sy = y0 < y1 ? 1 : -1;
-            let err = dx - dy;
-            
-            let x = x0;
-            let y = y0;
-            
-            while (true) {
-                cells.push({ x, y });
-                
-                if (x === x1 && y === y1) break;
-                
-                const e2 = 2 * err;
-                if (e2 > -dy) {
-                    err -= dy;
-                    x += sx;
-                }
-                if (e2 < dx) {
-                    err += dx;
-                    y += sy;
-                }
-            }
-            
-            return cells;
-        }
-
-        // High-performance mousemove with RAF optimization
-        let mouseMoveRAF = null;
-        let lastMouseUpdateTime = 0;
-        
-        // Initialize mousemove after short delay
-        setTimeout(() => {
-            const mapCanvas = map.getCanvasContainer();
-            mapCanvas.addEventListener('mousemove', (e) => {
-                // Convert DOM mouse coordinates to MapLibre point format
-                const rect = mapCanvas.getBoundingClientRect();
-                lastMouseX = e.clientX - rect.left;
-                lastMouseY = e.clientY - rect.top;
-                
-                // Use RAF for smooth 60fps updates
-                if (!mouseMoveRAF) {
-                    mouseMoveRAF = requestAnimationFrame((timestamp) => {
-                        // Throttle to 60fps max for optimal performance
-                        if (timestamp - lastMouseUpdateTime >= 16) {
-                            updateHighlight();
-                            lastMouseUpdateTime = timestamp;
-                        }
-                        mouseMoveRAF = null;
-                    });
-                }
-            }, { passive: true }); // Passive listener for better performance
-            
-            // Ensure overlay exists
-            createHoverOverlay();
-        }, 100);
-        
-        // Color palette (expanded for equal rows)
-        const colorPalette = [
-            '#6D001A', '#BE0039', '#FF4500', '#FFA800', '#FFD635', '#FFF8B8', '#00A368', '#00CC78',
-            '#7EED56', '#00756F', '#009EAA', '#00CCC0', '#2450A4', '#3690EA', '#51E9F4', '#493AC1',
-            '#6A5CFF', '#811E9F', '#B44AC0', '#FF3881', '#FF99AA', '#6D482F', '#9C6926', '#FFB470',
-            '#000000', '#515252', '#898D90', '#D4D7D9', '#FFFFFF', '#FF6B6B', '#4ECDC4', '#45B7D1',
-            '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9', '#F8C471'
-        ];
-
-        // Convert geographic coordinates (EPSG:4326) to Web Mercator (EPSG:3857)
-        function toWebMercator(lng, lat) {
-            const x = lng * 20037508.34 / 180;
-            const y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
-            const yMercator = y * 20037508.34 / 180;
-            return { x: x, y: yMercator };
-        }
-
-        // Convert Web Mercator (EPSG:3857) to geographic coordinates (EPSG:4326)
-        function fromWebMercator(x, y) {
-            const lng = x * 180 / 20037508.34;
-            const lat = Math.atan(Math.exp(y * Math.PI / 20037508.34)) * 2 - Math.PI / 2;
-            const latDegrees = lat * 180 / Math.PI;
-            return { lng: lng, lat: latDegrees };
-        }
-
-        // Convert screen coordinates to grid coordinates (normalized to 0-1,999,999 range)
-        function screenToGrid(screenX, screenY) {
-            const mapPoint = map.unproject([screenX, screenY]);
-            const mercatorPoint = toWebMercator(mapPoint.lng, mapPoint.lat);
-            
-            // Convert to normalized grid coordinates (0 to 1,999,999)
-            // Web Mercator range: -20037508.34 to +20037508.34 meters
-            const normalizedX = Math.floor((mercatorPoint.x + 20037508.34) / CELL_SIZE_METERS);
-            const normalizedY = Math.floor((mercatorPoint.y + 20037508.34) / CELL_SIZE_METERS);
-            
-            // Clamp to valid range
-            const gridX = Math.max(0, Math.min(1999999, normalizedX));
-            const gridY = Math.max(0, Math.min(1999999, normalizedY));
-            
-            return { x: gridX, y: gridY };
-        }
-
-        // Convert grid coordinates to geographic coordinates (from normalized 0-1,999,999 range)
-        function gridToGeo(gridX, gridY) {
-            // Convert normalized grid coordinates back to EPSG:3857 meters
-            // Web Mercator range: -20037508.34 to +20037508.34 meters
-            const mercatorX = (gridX * CELL_SIZE_METERS) - 20037508.34;
-            const mercatorY = (gridY * CELL_SIZE_METERS) - 20037508.34;
-            
-            // Convert back to EPSG:4326
-            const geoPoint = fromWebMercator(mercatorX, mercatorY);
-            return [geoPoint.lng, geoPoint.lat];
-        }
-
-        // Get grid cell size in meters (always 2m × 2m)
-        function getGridCellSize() {
-            return { meters: CELL_SIZE_METERS };
-        }
-
-        // Calculate how many grid cells are visible in the current viewport
-        function getVisibleGridCells() {
-            const bounds = map.getBounds();
-            
-            // Convert bounds to EPSG:3857
-            const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
-            const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
-            
-            // Convert to normalized grid coordinates (0 to 1,999,999)
-            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
-            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
-            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
-            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
-            
-            const cellsX = endGridX - startGridX;
-            const cellsY = endGridY - startGridY;
-            
-            return { x: cellsX, y: cellsY };
-        }
-
-        // Generate grid lines for the current viewport
-        function generateGridLines() {
-            const bounds = map.getBounds();
-            
-            // Convert bounds to EPSG:3857
-            const swMercator = toWebMercator(bounds.getWest(), bounds.getSouth());
-            const neMercator = toWebMercator(bounds.getEast(), bounds.getNorth());
-            
-            // Convert to normalized grid coordinates (0 to 1,999,999)
-            const startGridX = Math.floor((swMercator.x + 20037508.34) / CELL_SIZE_METERS);
-            const endGridX = Math.ceil((neMercator.x + 20037508.34) / CELL_SIZE_METERS);
-            const startGridY = Math.floor((swMercator.y + 20037508.34) / CELL_SIZE_METERS);
-            const endGridY = Math.ceil((neMercator.y + 20037508.34) / CELL_SIZE_METERS);
-            
-            const features = [];
-            
-            // Generate vertical lines (using normalized grid coordinates)
-            for (let x = startGridX; x <= endGridX; x++) {
-                // Convert normalized grid coordinate back to EPSG:3857 meters
-                const mercatorX = (x * CELL_SIZE_METERS) - 20037508.34;
-                const geoPoint1 = fromWebMercator(mercatorX, swMercator.y);
-                const geoPoint2 = fromWebMercator(mercatorX, neMercator.y);
-                
-                features.push({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: [
-                            [geoPoint1.lng, geoPoint1.lat],
-                            [geoPoint2.lng, geoPoint2.lat]
-                        ]
-                    },
-                    properties: { gridX: x, type: 'vertical' }
-                });
-            }
-            
-            // Generate horizontal lines (using normalized grid coordinates)
-            for (let y = startGridY; y <= endGridY; y++) {
-                // Convert normalized grid coordinate back to EPSG:3857 meters
-                const mercatorY = (y * CELL_SIZE_METERS) - 20037508.34;
-                const geoPoint1 = fromWebMercator(swMercator.x, mercatorY);
-                const geoPoint2 = fromWebMercator(neMercator.x, mercatorY);
-                
-                features.push({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: [
-                            [geoPoint1.lng, geoPoint1.lat],
-                            [geoPoint2.lng, geoPoint2.lat]
-                        ]
-                    },
-                    properties: { gridY: y, type: 'horizontal' }
-                });
-            }
-            
-            return features;
-        }
-
-        // Generate hover cell polygon
-        function generateHoverCell(gridX, gridY) {
-            // Convert normalized grid coordinates to EPSG:3857 meters
-            const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
-            const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
-            const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
-            const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
-            
-            // Convert corners back to EPSG:4326
-            const corner1 = fromWebMercator(mercatorX1, mercatorY1);
-            const corner2 = fromWebMercator(mercatorX2, mercatorY1);
-            const corner3 = fromWebMercator(mercatorX2, mercatorY2);
-            const corner4 = fromWebMercator(mercatorX1, mercatorY2);
-            
-            return {
-                type: 'Feature',
-                geometry: {
-                    type: 'Polygon',
-                    coordinates: [[
-                        [corner1.lng, corner1.lat],
-                        [corner2.lng, corner2.lat],
-                        [corner3.lng, corner3.lat],
-                        [corner4.lng, corner4.lat],
-                        [corner1.lng, corner1.lat]
-                    ]]
-                },
-                properties: { gridX, gridY }
-            };
-        }
-
-        // Update grid visibility based on viewport
-        function updateGridVisibility() {
-            const visibleCells = getVisibleGridCells();
-            const shouldShowGrid = visibleCells.x <= HOVER_THRESHOLD && visibleCells.y <= HOVER_THRESHOLD;
-            
-            if (shouldShowGrid !== gridVisible) {
-                gridVisible = shouldShowGrid;
-                
-                if (gridVisible) {
-                    // Only show hover layer (grid lines remain hidden)
-                    if (map.getLayer('grid-hover')) {
-                        map.setLayoutProperty('grid-hover', 'visibility', 'visible');
-                    }
-                } else {
-                    // Hide hover layer
-                    if (map.getLayer('grid-hover')) {
-                        map.setLayoutProperty('grid-hover', 'visibility', 'none');
-                    }
-                    // Clear hover
-                    if (currentHoveredCell) {
-                        map.getSource('grid-hover').setData({
-                            type: 'FeatureCollection',
-                            features: []
+                        inserts.push({
+                            x: paint.gridX,
+                            y: paint.gridY,
+                            color: paint.color,
+                            owner: USER_ID,
+                            owner_name: USER_NAME,
+                            owner_avatar: USER_AVATAR
                         });
-                        currentHoveredCell = null;
+                        if (paint.spendCharge) chargeSpends++;
                     }
                 }
+                
+                // Process deletes
+                if (deletes.length > 0) {
+                    for (const del of deletes) {
+                        await supabase
+                            .from('paints')
+                            .delete()
+                            .eq('x', del.gridX)
+                            .eq('y', del.gridY);
+                    }
+                }
+                
+                // Process inserts/updates
+                if (inserts.length > 0) {
+                    await supabase
+                        .from('paints')
+                        .upsert(inserts, { onConflict: 'x,y' });
+                }
+                
+                // Update charges if needed
+                if (chargeSpends > 0 && USER_ID) {
+                    await supabase
+                        .from('user_paints')
+                        .update({
+                            charges: USER_CHARGES,
+                            last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                            capacity: USER_CAPACITY
+                        })
+                        .eq('user_id', USER_ID);
+                }
             }
-        }
-
-        // Update grid data
-        function updateGrid() {
-            if (!gridVisible) return;
             
-            // Grid lines are not rendered, so we don't need to update them
-            // Only hover functionality is active
-        }
+            async function processPaintBatch() {
+                if (paintQueue.size === 0) return;
+                
+                const BATCH_SIZE = 100; // Process 100 cells at a time
+                const batch = Array.from(paintQueue.values());
+                paintQueue.clear();
+                
+                if (!supabase) return;
+                
+                // Process in chunks to avoid blocking the main thread
+                const processChunk = async (startIdx) => {
+                    const chunk = batch.slice(startIdx, startIdx + BATCH_SIZE);
+                    if (chunk.length === 0) return;
+                    
+                    await processBatchChunk(chunk);
+                    
+                    // Schedule next chunk on next frame
+                    if (startIdx + BATCH_SIZE < batch.length) {
+                        requestAnimationFrame(() => processChunk(startIdx + BATCH_SIZE));
+                    }
+                };
+                
+                // Start processing first chunk
+                await processChunk(0);
+            }
 
-        // Calculate wrapped coordinates (0-3999 range)
-        function getWrappedCoordinates(worldX, worldY) {
-            const displayX = worldX % 4000;
-            const displayY = worldY % 4000;
-            return { x: displayX, y: displayY };
-        }
-        
-        // ...existing code...
-        
-        function getCellColor(gridX, gridY) {
-                const cellKey = `${gridX},${gridY}`;
-                const cell = paintedCells.get(cellKey);
-                return cell ? cell.color : null;
-        }
+            // Setup Supabase Realtime subscription for instant paint updates
+            let realtimeSubscription = null;
+            
+            function setupRealtime() {
+              if (!supabase) return;
+              
+              // Cancel existing subscription if any
+              if (realtimeSubscription) {
+                supabase.removeChannel(realtimeSubscription);
+              }
+              
+              // Subscribe to paint updates
+              realtimeSubscription = supabase
+                .channel('paint_updates')
+                .on('postgres_changes', 
+                  { 
+                    event: '*', 
+                    schema: 'public', 
+                    table: 'paints',
+                    filter: 'action=eq.INSERT'
+                  }, 
+                  handlePaintUpdate
+                )
+                .subscribe(status => {
+                  if (status === 'SUBSCRIBED') {
+                    console.log('Realtime subscription active');
+                  } else {
+                    console.warn('Realtime subscription status:', status);
+                  }
+                });
+            }
+            
+            // Handle incoming paint updates with batching and debouncing
+            let pendingUpdates = new Map();
+            let updateTimeout = null;
+            
+            function handlePaintUpdate(payload) {
+                const { grid_x, grid_y, color, owner, owner_name, owner_avatar } = payload.new;
+                const cellKey = `${grid_x},${grid_y}`;
+                
+                // Skip if this is our own update (already handled optimistically)
+                if (owner === USER_ID) return;
+                
+                // Batch updates to minimize re-renders
+                pendingUpdates.set(cellKey, { 
+                    color, 
+                    owner, 
+                    owner_name, 
+                    owner_avatar 
+                });
+                
+                // Debounce updates to prevent render thrashing
+                if (!updateTimeout) {
+                    updateTimeout = setTimeout(() => {
+                        // Apply all pending updates
+                        for (const [key, cell] of pendingUpdates) {
+                            paintedCells.set(key, cell);
+                            const [x, y] = key.split(',').map(Number);
+                            markDirty(x, y);
+                        }
+                        
+                        // Clear the batch
+                        pendingUpdates.clear();
+                        updateTimeout = null;
+                        
+                        // Update UI once at the end
+                        updateCellCounter();
+                    }, 16); // ~60fps
+                }
+            }
+
+            // Call setupRealtime after initial load
+            (async function startPersistence(){
+              if (!supabase) return;
+              const user = await ensureAuth();
+              renderAuthUI(user);
+              if (user) { 
+                await loadOrInitUserPaints(); 
+              } else { 
+                updatePaintButtonUI(); 
+              }
+              await initialLoad();
+              setupRealtime();
+              // Start polling every 2s until Realtime is available
+              setInterval(pollUpdates, 2000);
+            })();
         
 // High-performance batched update system with HTML overlay for instant feedback
         let updatePaintedCellsRAF = null;
@@ -2160,10 +1710,8 @@
             overlay.style.pointerEvents = 'none';
             overlay.style.zIndex = '9000'; // Above map but below UI
             overlay.style.willChange = 'transform,width,height';
-            overlay.style.transform = 'translateZ(0)'; // FORCE GPU acceleration
+            overlay.style.transform = 'translateZ(0)';
             overlay.style.backfaceVisibility = 'hidden';
-            overlay.style.perspective = '1000px';
-            overlay.style.contain = 'layout style paint';
             
             container.appendChild(overlay);
             paintOverlay = overlay;
@@ -2187,13 +1735,6 @@
             paintDiv.style.backgroundColor = color;
             paintDiv.style.pointerEvents = 'none';
             paintDiv.setAttribute('data-key', paintKey);
-            
-            // FORCE GPU ACCELERATION for instant rendering
-            paintDiv.style.transform = 'translateZ(0)';
-            paintDiv.style.willChange = 'transform, opacity';
-            paintDiv.style.backfaceVisibility = 'hidden';
-            paintDiv.style.perspective = '1000px';
-            paintDiv.style.contain = 'layout style paint';
             
             // Calculate position like hover overlay
             const bounds = map.getBounds();
@@ -2229,17 +1770,6 @@
             }
         }
         
-        // Remove paint from HTML overlay
-        function removeInstantPaint(gridX, gridY) {
-            if (!paintOverlay) return;
-            const paintKey = `${gridX},${gridY}`;
-            const existingPaint = paintOverlay.querySelector(`[data-key="${paintKey}"]`);
-            if (existingPaint) {
-                existingPaint.remove();
-            }
-            recentPaints.delete(paintKey);
-        }
-        
         // Update map projection for HTML overlay paints
         function updatePaintOverlayPositions() {
             if (!paintOverlay) return;
@@ -2261,20 +1791,28 @@
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // FORCE IMMEDIATE UPDATE - no requestAnimationFrame delay
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                
-                // INSTANT update - no batching delay
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
+                // Use RAF for smooth 60fps updates
+                if (!updatePaintedCellsRAF) {
+                    updatePaintedCellsRAF = requestAnimationFrame(() => {
+                        // Batch process all pending updates
+                        const features = [];
+                        paintedCells.forEach((cell, cellKey) => {
+                            const [x, y] = cellKey.split(',').map(Number);
+                            const cellFeature = generateHoverCell(x, y);
+                            cellFeature.properties.color = cell.color;
+                            features.push(cellFeature);
+                        });
+                        
+                        // Single efficient update
+                        map.getSource('painted-cells').setData({
+                            type: 'FeatureCollection',
+                            features: features
+                        });
+                        
+                        updatePaintedCellsRAF = null;
+                        pendingCellUpdates.clear();
+                    });
+                }
         }
         
         function updateCellCounter() {
@@ -2323,6 +1861,145 @@
             });
         }
 
+        // ================= OPTIMIZED RENDERING SYSTEM =================
+        // Offscreen canvas for high-performance rendering
+        const offscreenCanvas = document.createElement('canvas');
+        const offscreenCtx = offscreenCanvas.getContext('2d', { alpha: true });
+        let renderDirty = false;
+        let lastRenderTime = 0;
+        const TARGET_FPS = 60;
+        const FRAME_BUDGET_MS = 1000 / TARGET_FPS;
+        
+        // Track dirty regions that need redrawing
+        const dirtyRects = [];
+        const CELL_SIZE_PX = 4; // Base cell size in pixels at zoom level 0
+        
+        // Initialize the offscreen canvas with WebGL acceleration
+        function initOffscreenCanvas() {
+            const container = map.getCanvasContainer();
+            const rect = container.getBoundingClientRect();
+            
+            // Set canvas size to match container with device pixel ratio for crisp rendering
+            const dpr = window.devicePixelRatio || 1;
+            offscreenCanvas.width = rect.width * dpr;
+            offscreenCanvas.height = rect.height * dpr;
+            offscreenCanvas.style.width = `${rect.width}px`;
+            offscreenCanvas.style.height = `${rect.height}px`;
+            offscreenCanvas.style.position = 'absolute';
+            offscreenCanvas.style.top = '0';
+            offscreenCanvas.style.left = '0';
+            offscreenCanvas.style.pointerEvents = 'none';
+            offscreenCanvas.style.imageRendering = 'crisp-edges';
+            offscreenCanvas.style.zIndex = '1'; // Above map, below UI
+            
+            // Enable hardware acceleration
+            offscreenCanvas.style.willChange = 'transform';
+            offscreenCanvas.style.transform = 'translateZ(0)';
+            
+            container.appendChild(offscreenCanvas);
+            
+            // Scale the context for high DPI displays
+            offscreenCtx.scale(dpr, dpr);
+            
+            // Clear the canvas
+            offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+            
+            // Optimize canvas settings
+            offscreenCtx.imageSmoothingEnabled = false;
+        }
+        
+        // Schedule a render on the next animation frame
+        function requestRender() {
+            if (!renderDirty) {
+                renderDirty = true;
+                window.requestAnimationFrame(render);
+            }
+        }
+        
+        // Main render loop with performance optimizations
+        function render(timestamp) {
+            if (!renderDirty) return;
+            
+            const now = performance.now();
+            const delta = now - lastRenderTime;
+            
+            // Throttle rendering to target FPS using requestAnimationFrame timing
+            if (delta < FRAME_BUDGET_MS) {
+                window.requestAnimationFrame(render);
+                return;
+            }
+            
+            lastRenderTime = now;
+            
+            // Use requestIdleCallback if available for background rendering
+            if (window.requestIdleCallback) {
+                requestIdleCallback(render, { timeout: 1000 / 30 }); // Max 30fps in background
+            }
+            
+            // Process all pending paints
+            if (dirtyRects.length > 0) {
+                const bounds = map.getBounds();
+                const zoom = map.getZoom();
+                const cellSize = Math.max(1, Math.floor(CELL_SIZE_PX * Math.pow(2, zoom - 1)));
+                
+                offscreenCtx.save();
+                offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+                
+                // Draw only visible cells
+                const visibleCells = getVisibleGridCells();
+                
+                // Draw cells in the current viewport
+                for (const [cellKey, cell] of paintedCells) {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    
+                    // Only draw cells in the current viewport
+                    if (x < visibleCells.minX || x > visibleCells.maxX || 
+                        y < visibleCells.minY || y > visibleCells.maxY) {
+                        continue;
+                    }
+                    
+                    const pos = map.project(gridToGeo(x, y));
+                    
+                    // Draw cell
+                    offscreenCtx.fillStyle = cell.color;
+                    offscreenCtx.fillRect(
+                        Math.round(pos.x - cellSize/2),
+                        Math.round(pos.y - cellSize/2),
+                        cellSize,
+                        cellSize
+                    );
+                }
+                
+                dirtyRects.length = 0; // Clear dirty rects after rendering
+                offscreenCtx.restore();
+            }
+            
+            renderDirty = false;
+        }
+        
+        // Mark a grid cell as dirty with batching
+        let dirtyBatch = [];
+        let batchTimeout = null;
+        const BATCH_DELAY = 16; // ~60fps
+        
+        function markDirty(gridX, gridY) {
+            // Add to current batch
+            dirtyBatch.push({x: gridX, y: gridY});
+            
+            // If no batch is scheduled, schedule one
+            if (!batchTimeout) {
+                batchTimeout = setTimeout(() => {
+                    // Process all dirty rects in this batch
+                    for (const rect of dirtyBatch) {
+                        dirtyRects.push(rect);
+                    }
+                    dirtyBatch = [];
+                    batchTimeout = null;
+                    requestRender();
+                }, BATCH_DELAY);
+            }
+        }
+        
         // Performance optimization variables
         let mouseMoveTimeout = null;
         let isMapMoving = false;
@@ -2415,6 +2092,11 @@
         // Initialize map layers when ready
         map.on('load', () => {
             console.log('Map loaded successfully');
+            
+            // Initialize the offscreen canvas after map is loaded
+            initOffscreenCanvas();
+            
+            // Initialize map layers
             initializeMapLayers();
         });
         
@@ -2562,6 +2244,11 @@
             updateGridVisibility();
             updateGrid();
             updatePaintedCellsVisibility();
+            
+            // Force redraw of offscreen canvas on zoom
+            dirtyRects.length = 0; // Clear dirty rects
+            renderDirty = true; // Force full redraw
+            requestRender();
             updateZoomHintVisibility();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
