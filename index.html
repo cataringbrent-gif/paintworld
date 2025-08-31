@@ -1431,8 +1431,8 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.delete(cellKey);
                   
-                  // INSTANT VISUAL FEEDBACK - same as hover
-                  instantPaintVisual(gridX, gridY, null);
+                  // INSTANT visual feedback like hover highlight
+                  showImmediatePaintFeedback(gridX, gridY, 'transparent');
                   
                   // RESTORE CHARGE when erasing own paint
                   if (USER_ID && USER_CHARGES < USER_CAPACITY) {
@@ -1475,8 +1475,8 @@
                   // INSTANT local update - IMMEDIATE visual feedback
                   paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
                   
-                  // INSTANT VISUAL FEEDBACK - same responsiveness as hover
-                  instantPaintVisual(gridX, gridY, color);
+                  // INSTANT visual feedback like hover highlight
+                  showImmediatePaintFeedback(gridX, gridY, color);
                   
                   // INSTANT visual update - no requestAnimationFrame delay
                   updatePaintedCellsDisplay();
@@ -1661,8 +1661,8 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // INSTANT VISUAL FEEDBACK - same as hover
-                                instantPaintVisual(cell.x, cell.y, selectedColor);
+                                // INSTANT visual feedback like hover highlight
+                                showImmediatePaintFeedback(cell.x, cell.y, selectedColor);
                                 
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
@@ -1710,8 +1710,8 @@
                                 // INSTANT local update
                                 paintedCells.delete(cellKey);
                                 
-                                // INSTANT VISUAL FEEDBACK - same as hover
-                                instantPaintVisual(cell.x, cell.y, null);
+                                // INSTANT visual feedback like hover highlight
+                                showImmediatePaintFeedback(cell.x, cell.y, 'transparent');
                                 
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
@@ -2148,79 +2148,53 @@
                 return cell ? cell.color : null;
         }
         
-        // High-performance batched update system with instant visual feedback
+        // High-performance batched update system with instant visual feedback like hover highlight
         let updatePaintedCellsRAF = null;
         let pendingCellUpdates = new Set();
-        let paintedCellsOverlay = null; // HTML overlay for instant painted cells feedback
-        let paintedCellsElements = new Map(); // cellKey -> DOM element
+        let immediatePaintOverlay = null;
         
-        // Create instant painted cells overlay (like hover but persistent)
-        function createPaintedCellsOverlay() {
-            if (paintedCellsOverlay) return paintedCellsOverlay;
+        function createImmediatePaintOverlay() {
+            if (immediatePaintOverlay) return immediatePaintOverlay;
             
             const container = map.getContainer();
-            paintedCellsOverlay = document.createElement('div');
-            paintedCellsOverlay.id = 'paintedCellsOverlay';
-            paintedCellsOverlay.style.position = 'absolute';
-            paintedCellsOverlay.style.pointerEvents = 'none';
-            paintedCellsOverlay.style.zIndex = '9500'; // Below hover but above map
-            paintedCellsOverlay.style.willChange = 'transform,width,height';
-            paintedCellsOverlay.style.transform = 'translateZ(0)';
-            paintedCellsOverlay.style.backfaceVisibility = 'hidden';
-            paintedCellsOverlay.style.perspective = '1000px';
-            
-            container.appendChild(paintedCellsOverlay);
-            return paintedCellsOverlay;
+            immediatePaintOverlay = document.createElement('div');
+            immediatePaintOverlay.id = 'immediatePaintOverlay';
+            immediatePaintOverlay.style.position = 'absolute';
+            immediatePaintOverlay.style.pointerEvents = 'none';
+            immediatePaintOverlay.style.zIndex = '9000';
+            immediatePaintOverlay.style.willChange = 'transform,width,height';
+            immediatePaintOverlay.style.transform = 'translateZ(0)';
+            immediatePaintOverlay.style.backfaceVisibility = 'hidden';
+            immediatePaintOverlay.style.perspective = '1000px';
+            container.appendChild(immediatePaintOverlay);
+            return immediatePaintOverlay;
         }
         
-        // Add instant visual feedback for painted cell
-        function instantPaintVisual(gridX, gridY, color) {
-            if (!paintedCellsOverlay) createPaintedCellsOverlay();
+        function showImmediatePaintFeedback(gridX, gridY, color) {
+            const overlay = createImmediatePaintOverlay();
+            const pixelBounds = map.project([gridX, gridY]);
+            const nextPixelBounds = map.project([gridX + 1, gridY + 1]);
             
-            const cellKey = `${gridX},${gridY}`;
-            let cellElement = paintedCellsElements.get(cellKey);
+            const width = nextPixelBounds.x - pixelBounds.x;
+            const height = nextPixelBounds.y - pixelBounds.y;
             
-            if (color === null) {
-                // Remove painted cell overlay
-                if (cellElement) {
-                    cellElement.remove();
-                    paintedCellsElements.delete(cellKey);
-                }
-                return;
-            }
+            overlay.style.left = pixelBounds.x + 'px';
+            overlay.style.top = pixelBounds.y + 'px';
+            overlay.style.width = width + 'px';
+            overlay.style.height = height + 'px';
+            overlay.style.backgroundColor = color;
+            overlay.style.display = 'block';
             
-            if (!cellElement) {
-                // Create new cell element
-                cellElement = document.createElement('div');
-                cellElement.style.position = 'absolute';
-                cellElement.style.width = '20px';
-                cellElement.style.height = '20px';
-                cellElement.style.pointerEvents = 'none';
-                cellElement.style.transformOrigin = 'center';
-                cellElement.style.willChange = 'transform';
-                paintedCellsOverlay.appendChild(cellElement);
-                paintedCellsElements.set(cellKey, cellElement);
-            }
-            
-            // Position and color the cell instantly
-            try {
-                const lngLat = { lng: gridX * CELL_SIZE_METERS - 20037508.34, lat: 20037508.34 - gridY * CELL_SIZE_METERS };
-                const point = map.project(lngLat);
-                
-                cellElement.style.left = `${point.x - 10}px`;
-                cellElement.style.top = `${point.y - 10}px`;
-                cellElement.style.backgroundColor = color;
-                cellElement.style.transform = 'translateZ(0)';
-            } catch (e) {
-                // Fallback positioning if map not ready
-                cellElement.style.display = 'none';
-            }
+            // Hide after a short delay when the proper map layer updates
+            setTimeout(() => {
+                overlay.style.display = 'none';
+            }, 50);
         }
         
         function updatePaintedCellsDisplay() {
                 if (!map.getSource('painted-cells')) return;
                 
-                // Use RAF for smooth 60fps updates
+                // Use RAF for smooth 60fps updates - same as hover
                 if (!updatePaintedCellsRAF) {
                     updatePaintedCellsRAF = requestAnimationFrame(() => {
                         // Batch process all pending updates
@@ -2379,24 +2353,10 @@
             }
         }
 
-        // Update painted cells positions when map moves
-        map.on('move', () => {
-            if (!paintedCellsElements.size) return;
-            
-            // Reposition all painted cell overlays
-            paintedCellsElements.forEach((element, cellKey) => {
-                const [gridX, gridY] = cellKey.split(',').map(Number);
-                try {
-                    const lngLat = { lng: gridX * CELL_SIZE_METERS - 20037508.34, lat: 20037508.34 - gridY * CELL_SIZE_METERS };
-                    const point = map.project(lngLat);
-                    
-                    element.style.left = `${point.x - 10}px`;
-                    element.style.top = `${point.y - 10}px`;
-                } catch (e) {
-                    // Hide if positioning fails
-                    element.style.display = 'none';
-                }
-            });
+        // Initialize map layers when ready
+        map.on('load', () => {
+            console.log('Map loaded successfully');
+            initializeMapLayers();
         });
         
         function initializeMapLayers() {
