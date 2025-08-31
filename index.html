@@ -2341,68 +2341,6 @@
             });
         }
         
-        function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
-
-                // Check if we're below threshold - if so, update INSTANTLY without RAF delay
-                const vc = getVisibleGridCells();
-                const shouldShowPaints = vc.x <= 4000 && vc.y <= 4000;
-
-                if (shouldShowPaints) {
-                    // INSTANT update when paints should be visible
-                    const features = [];
-                    paintedCells.forEach((cell, cellKey) => {
-                        // Only add to MapLibre layer if it's NOT the user's own paint (overlay handles those)
-                        if (cell.owner !== USER_ID) {
-                            const [x, y] = cellKey.split(',').map(Number);
-                            const cellFeature = generateHoverCell(x, y);
-                            cellFeature.properties.color = cell.color;
-                            features.push(cellFeature);
-                        }
-                    });
-
-                    // INSTANT update - no RAF delay for critical visibility
-                    map.getSource('painted-cells').setData({
-                        type: 'FeatureCollection',
-                        features: features
-                    });
-
-                    // Ensure overlay paints are also visible immediately
-                    syncOverlayWithMapLayer();
-                    addOtherUsersPaintsToOverlay();
-                } else {
-                    // Use RAF for non-critical updates when paints are hidden
-                    if (!updatePaintedCellsRAF) {
-                        updatePaintedCellsRAF = requestAnimationFrame(() => {
-                            // ONLY show other users' paints in MapLibre layer - overlay handles user's paints
-                            const features = [];
-                            paintedCells.forEach((cell, cellKey) => {
-                                // Only add to MapLibre layer if it's NOT the user's own paint (overlay handles those)
-                                if (cell.owner !== USER_ID) {
-                                    const [x, y] = cellKey.split(',').map(Number);
-                                    const cellFeature = generateHoverCell(x, y);
-                                    cellFeature.properties.color = cell.color;
-                                    features.push(cellFeature);
-                                }
-                            });
-
-                            // Single efficient update - only other users' paints
-                            map.getSource('painted-cells').setData({
-                                type: 'FeatureCollection',
-                                features: features
-                            });
-
-                            // Sync overlay with map layer (for other users' paints and zoom/move updates)
-                            syncOverlayWithMapLayer();
-                            addOtherUsersPaintsToOverlay();
-
-                            updatePaintedCellsRAF = null;
-                            pendingCellUpdates.clear();
-                        });
-                    }
-                }
-        }
-        
         function updateCellCounter() {
             // No number needed, just keep the button text as 'Paint'
         }
@@ -2597,18 +2535,20 @@
                 }
             });
             
-            // Add painted cells source and layer with performance optimizations
+            // Add painted cells source and layer with ULTRA FAST optimizations
             map.addSource('painted-cells', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
                 },
-                // Performance optimizations
-                tolerance: 0,
-                buffer: 0,
+                // ULTRA FAST OPTIMIZATIONS
+                tolerance: 0.1, // Allow some simplification for speed
+                buffer: 1, // Minimal buffer for speed
                 maxzoom: 24,
-                generateId: true
+                generateId: true,
+                // Critical: Use feature state instead of recreating features
+                promoteId: 'id'
             });
 
             map.addLayer({
@@ -2637,31 +2577,15 @@
             updateZoomHintVisibility();
         }
 
-        // INSTANT paint visibility update - no delays when crossing threshold
+        // Toggle painted layer visibility depending on visible grid cells
         function updatePaintedCellsVisibility() {
             if (!map.getLayer('painted-cells')) return;
             const vc = getVisibleGridCells();
-            const shouldBeVisible = vc.x <= 4000 && vc.y <= 4000;
+            const visible = vc.x <= 4000 && vc.y <= 4000;
             const current = map.getLayoutProperty('painted-cells', 'visibility');
-            const desired = shouldBeVisible ? 'visible' : 'none';
-
+            const desired = visible ? 'visible' : 'none';
             if (current !== desired) {
-                // INSTANT update - no RAF delay
                 map.setLayoutProperty('painted-cells', 'visibility', desired);
-
-                // If becoming visible, ensure overlay paints are also shown immediately
-                if (shouldBeVisible && paintOverlay) {
-                    // Force immediate overlay paint display for all visible paints
-                    paintedCells.forEach((cell, cellKey) => {
-                        if (!paintCellsCache.has(cellKey)) {
-                            instantPaintCellVisual(
-                                cell.gridX || parseInt(cellKey.split(',')[0]),
-                                cell.gridY || parseInt(cellKey.split(',')[1]),
-                                cell.color
-                            );
-                        }
-                    });
-                }
             }
         }
 
