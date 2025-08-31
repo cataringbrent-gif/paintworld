@@ -2347,16 +2347,19 @@
                 // Use RAF for smooth 60fps updates
                 if (!updatePaintedCellsRAF) {
                     updatePaintedCellsRAF = requestAnimationFrame(() => {
-                        // Batch process all pending updates
+                        // ONLY show other users' paints in MapLibre layer - overlay handles user's paints
                         const features = [];
                         paintedCells.forEach((cell, cellKey) => {
-                            const [x, y] = cellKey.split(',').map(Number);
-                            const cellFeature = generateHoverCell(x, y);
-                            cellFeature.properties.color = cell.color;
-                            features.push(cellFeature);
+                            // Only add to MapLibre layer if it's NOT the user's own paint (overlay handles those)
+                            if (cell.owner !== USER_ID) {
+                                const [x, y] = cellKey.split(',').map(Number);
+                                const cellFeature = generateHoverCell(x, y);
+                                cellFeature.properties.color = cell.color;
+                                features.push(cellFeature);
+                            }
                         });
 
-                        // Single efficient update
+                        // Single efficient update - only other users' paints
                         map.getSource('painted-cells').setData({
                             type: 'FeatureCollection',
                             features: features
