@@ -2258,16 +2258,29 @@
             cellElement.style.transform = 'translateZ(0)';
             cellElement.style.backfaceVisibility = 'hidden';
 
-            // Calculate pixel position using same coordinate system as hover
-            const lngLat = generateHoverCell(gridX, gridY).geometry.coordinates[0][0];
-            const point = map.project(lngLat);
-            const pixelSize = map.getZoom() > 10 ?
-                Math.max(2, Math.pow(2, map.getZoom() - 10)) : 1;
+            // Calculate pixel position using EXACT SAME approach as hover system
+            // Compute cell corners in EPSG:3857 then convert to lng/lat
+            const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorY1 = (gridY * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorX2 = ((gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
+            const mercatorY2 = ((gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
 
-            cellElement.style.left = `${point.x - pixelSize/2}px`;
-            cellElement.style.top = `${point.y - pixelSize/2}px`;
-            cellElement.style.width = `${pixelSize}px`;
-            cellElement.style.height = `${pixelSize}px`;
+            const corner1 = fromWebMercator(mercatorX1, mercatorY1); // top-left
+            const corner3 = fromWebMercator(mercatorX2, mercatorY2); // bottom-right
+
+            // Project to screen (read-only)
+            const p1 = map.project([corner1.lng, corner1.lat]);
+            const p3 = map.project([corner3.lng, corner3.lat]);
+
+            const left = Math.min(p1.x, p3.x);
+            const top = Math.min(p1.y, p3.y);
+            const width = Math.max(1, Math.abs(p3.x - p1.x));
+            const height = Math.max(1, Math.abs(p3.y - p1.y));
+
+            cellElement.style.left = `${left}px`;
+            cellElement.style.top = `${top}px`;
+            cellElement.style.width = `${width}px`;
+            cellElement.style.height = `${height}px`;
 
             // Add to overlay IMMEDIATELY
             paintOverlay.appendChild(cellElement);
@@ -2285,19 +2298,30 @@
         function syncOverlayWithMapLayer() {
             // Update positions of overlay elements when map moves/zooms
             if (!paintOverlay) return;
-            
+
             paintCellsCache.forEach((cachedCell, cellKey) => {
                 if (cachedCell.element && cachedCell.element.parentNode) {
-                    // Recalculate position
-                    const lngLat = generateHoverCell(cachedCell.gridX, cachedCell.gridY).geometry.coordinates[0][0];
-                    const point = map.project(lngLat);
-                    const pixelSize = map.getZoom() > 10 ?
-                        Math.max(2, Math.pow(2, map.getZoom() - 10)) : 1;
+                    // Recalculate position using EXACT SAME approach as hover system
+                    const mercatorX1 = (cachedCell.gridX * CELL_SIZE_METERS) - 20037508.34;
+                    const mercatorY1 = (cachedCell.gridY * CELL_SIZE_METERS) - 20037508.34;
+                    const mercatorX2 = ((cachedCell.gridX + 1) * CELL_SIZE_METERS) - 20037508.34;
+                    const mercatorY2 = ((cachedCell.gridY + 1) * CELL_SIZE_METERS) - 20037508.34;
 
-                    cachedCell.element.style.left = `${point.x - pixelSize/2}px`;
-                    cachedCell.element.style.top = `${point.y - pixelSize/2}px`;
-                    cachedCell.element.style.width = `${pixelSize}px`;
-                    cachedCell.element.style.height = `${pixelSize}px`;
+                    const corner1 = fromWebMercator(mercatorX1, mercatorY1); // top-left
+                    const corner3 = fromWebMercator(mercatorX2, mercatorY2); // bottom-right
+
+                    const p1 = map.project([corner1.lng, corner1.lat]);
+                    const p3 = map.project([corner3.lng, corner3.lat]);
+
+                    const left = Math.min(p1.x, p3.x);
+                    const top = Math.min(p1.y, p3.y);
+                    const width = Math.max(1, Math.abs(p3.x - p1.x));
+                    const height = Math.max(1, Math.abs(p3.y - p1.y));
+
+                    cachedCell.element.style.left = `${left}px`;
+                    cachedCell.element.style.top = `${top}px`;
+                    cachedCell.element.style.width = `${width}px`;
+                    cachedCell.element.style.height = `${height}px`;
                 }
             });
         }
