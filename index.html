@@ -1411,139 +1411,132 @@
             // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
             let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
             let paintBatchTimeout = null;
-            const PAINT_BATCH_DELAY = 100; // ms - Increased for better batching
-            let isProcessingBatch = false; // Prevent multiple simultaneous batch operations
+            const PAINT_BATCH_DELAY = 1; // ms - 0.001 second batching for maximum responsiveness
             
             function paintCell(gridX, gridY, color) {
-                const cellKey = `${gridX},${gridY}`;
-                const cell = paintedCells.get(cellKey);
+              const cellKey = `${gridX},${gridY}`;
+              const cell = paintedCells.get(cellKey);
 
-                if (!supabase || !USER_ID) {
-                    showNotification('Storage not configured yet');
-                    return;
-                }
+              if (!supabase || !USER_ID) {
+                showNotification('Storage not configured yet');
+                return;
+              }
 
-                if (color === null) {
-                    if (!cell) return; // nothing to erase
-                    if (cell.owner !== USER_ID) {
-                        showNotification('You can only delete your own paint.');
-                        return;
+              if (color === null) {
+                  if (!cell) return; // nothing to erase
+                  if (cell.owner !== USER_ID) {
+                      showNotification('You can only delete your own paint.');
+                      return;
+                  }
+                  // INSTANT local update - IMMEDIATE visual feedback
+                  paintedCells.delete(cellKey);
+                  
+                  // RESTORE CHARGE when erasing own paint
+                  if (USER_ID && USER_CHARGES < USER_CAPACITY) {
+                    USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
+                    // Clear cooldown if we're back at capacity
+                    if (USER_CHARGES >= USER_CAPACITY) {
+                      lastRefillAt = null;
                     }
-                    // INSTANT local update - IMMEDIATE visual feedback
-                    paintedCells.delete(cellKey);
-                    
-                    // RESTORE CHARGE when erasing own paint
-                    if (USER_ID && USER_CHARGES < USER_CAPACITY) {
-                        USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                        // Clear cooldown if we're back at capacity
-                        if (USER_CHARGES >= USER_CAPACITY) {
-                            lastRefillAt = null;
-                        }
-                        updatePaintButtonUI();
+                    updatePaintButtonUI();
+                  }
+                  
+                  // INSTANT visual update - no requestAnimationFrame delay
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Queue DB delete with charge restoration
+                  paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
+                  schedulePaintBatch();
+              } else {
+                  // Require charges for authenticated users
+                  if (USER_ID) {
+                    if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
+                  }
+                  if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
+                      showNotification();
+                      return;
+                  }
+                  // If repainting a cell we already own:
+                  let spendCharge = true;
+                  if (cell && USER_ID && cell.owner === USER_ID) {
+                    // If color is unchanged, skip any write and do not spend
+                    if (cell.color === color) {
+                      updatePaintButtonUI();
+                      return;
                     }
-                    
-                    // INSTANT visual update - no requestAnimationFrame delay
-                    updatePaintedCellsDisplay();
-                    updateCellCounter();
-                    
-                    // Queue DB delete with charge restoration
-                    paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
-                    schedulePaintBatch();
-                } else {
-                    // Require charges for authenticated users
-                    if (USER_ID) {
-                        if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
-                    }
-                    if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
-                        showNotification();
-                        return;
-                    }
-                    // If repainting a cell we already own:
-                    let spendCharge = true;
-                    if (cell && USER_ID && cell.owner === USER_ID) {
-                        // If color is unchanged, skip any write and do not spend
-                        if (cell.color === color) {
-                            updatePaintButtonUI();
-                            return;
-                        }
-                        // Allow color change without spending a charge
-                        spendCharge = false;
-                    }
-                    
-                    // INSTANT local update - IMMEDIATE visual feedback
-                    paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-                    
-                    // INSTANT visual update - no requestAnimationFrame delay
-                    updatePaintedCellsDisplay();
-                    updateCellCounter();
-                    
-                    // Spend charge locally
-                    if (USER_ID && spendCharge) {
-                        USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                        lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                        updatePaintButtonUI();
-                    }
-                    
-                    // Queue DB write
-                    paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
-                    schedulePaintBatch();
-                }
+                    // Allow color change without spending a charge
+                    spendCharge = false;
+                  }
+                  
+                  // INSTANT local update - IMMEDIATE visual feedback
+                  paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+                  
+                  // INSTANT visual update - no requestAnimationFrame delay
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                  
+                  // Spend charge locally
+                  if (USER_ID && spendCharge) {
+                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                    updatePaintButtonUI();
+                  }
+                  
+                  // Queue DB write
+                  paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
+                  schedulePaintBatch();
+              }
             }
             
             function schedulePaintBatch() {
-                if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
-                paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
+              if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
+              paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
             }
             
             async function processPaintBatch() {
-                if (paintQueue.size === 0 || isProcessingBatch) return;
-                
-                isProcessingBatch = true;
-                
-                try {
-                    const batch = Array.from(paintQueue.values());
-                    paintQueue.clear();
-                    
-                    // Process deletes
-                    const deletes = batch.filter(p => p.color === null);
-                    if (deletes.length > 0) {
-                        for (const del of deletes) {
-                            await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
-                        }
-                        
-                        // Update charges for deletions that restore charges
-                        const chargeRestores = deletes.filter(p => p.restoreCharge).length;
-                        if (chargeRestores > 0) {
-                            await supabase.from('user_paints').update({
-                                charges: USER_CHARGES,
-                                last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                                capacity: USER_CAPACITY
-                            }).eq('user_id', USER_ID);
-                        }
-                    }
-                    
-                    // Process paints
-                    const paints = batch.filter(p => p.color !== null);
-                    if (paints.length > 0) {
-                        const upserts = paints.map(p => ({
-                            x: p.gridX, y: p.gridY, color: p.color,
-                            owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
-                        }));
-                        await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
-                        
-                        // Update charges in batch
-                        const chargeSpends = paints.filter(p => p.spendCharge).length;
-                        if (chargeSpends > 0) {
-                            await supabase.from('user_paints').update({
-                                charges: USER_CHARGES,
-                                last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                                capacity: USER_CAPACITY
-                            }).eq('user_id', USER_ID);
-                        }
-                    }
-                } finally {
-                    isProcessingBatch = false;
+              if (paintQueue.size === 0) return;
+              
+              const batch = Array.from(paintQueue.values());
+              paintQueue.clear();
+              
+              // Process deletes
+              const deletes = batch.filter(p => p.color === null);
+              if (deletes.length > 0) {
+                for (const del of deletes) {
+                  await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
                 }
+                
+                // Update charges for deletions that restore charges
+                const chargeRestores = deletes.filter(p => p.restoreCharge).length;
+                if (chargeRestores > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
+                }
+              }
+              
+              // Process paints
+              const paints = batch.filter(p => p.color !== null);
+              if (paints.length > 0) {
+                const upserts = paints.map(p => ({
+                  x: p.gridX, y: p.gridY, color: p.color,
+                  owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
+                }));
+                await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
+                
+                // Update charges in batch
+                const chargeSpends = paints.filter(p => p.spendCharge).length;
+                if (chargeSpends > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
+                }
+              }
             }
             const map = new maplibregl.Map({
                 container: 'map',
@@ -1662,9 +1655,6 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // INSTANT HTML OVERLAY FEEDBACK - Same responsiveness as hover
-                                addInstantPaint(cell.x, cell.y, selectedColor);
-                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1735,7 +1725,7 @@
                         if (hasNewErases) {
                             updatePaintedCellsDisplay();
                             updateCellCounter();
-                            updatePaintButtonUI();
+                            updateChargesDisplay();
                             schedulePaintBatch();
                         }
                     } else {
@@ -1770,9 +1760,6 @@
                     overlay.style.border = 'none';
                     overlay.style.boxShadow = 'none';
                     overlay.style.willChange = 'transform,width,height';
-                    overlay.style.transform = 'translateZ(0)'; // Force GPU acceleration
-                    overlay.style.backfaceVisibility = 'hidden'; // Additional GPU optimization
-                    overlay.style.perspective = '1000px'; // Enable 3D acceleration
                     
                     // Create SVG corner brackets as background image - more transparent L-shapes
                     const svgCorners = `
@@ -1895,12 +1882,7 @@
             return cells;
         }
 
-        // High-performance mousemove with RAF optimization
-        let mouseMoveRAF = null;
-        let lastMouseUpdateTime = 0;
-        let mouseMoveThrottle = 16; // 60fps max
-        
-        // Initialize mousemove after short delay
+        // Add direct DOM mousemove listener IMMEDIATELY - no waiting for map load
         setTimeout(() => {
             const mapCanvas = map.getCanvasContainer();
             mapCanvas.addEventListener('mousemove', (e) => {
@@ -1909,22 +1891,12 @@
                 lastMouseX = e.clientX - rect.left;
                 lastMouseY = e.clientY - rect.top;
                 
-                // Use RAF for smooth 60fps updates with proper throttling
-                if (!mouseMoveRAF) {
-                    mouseMoveRAF = requestAnimationFrame((timestamp) => {
-                        // Throttle to 60fps max for optimal performance
-                        if (timestamp - lastMouseUpdateTime >= mouseMoveThrottle) {
-                            updateHighlight();
-                            lastMouseUpdateTime = timestamp;
-                        }
-                        mouseMoveRAF = null;
-                    });
-                }
-            }, { passive: true }); // Passive listener for better performance
-            
+                // Immediate update without waiting for requestAnimationFrame
+                updateHighlight();
+            });
             // Ensure overlay exists
             createHoverOverlay();
-        }, 100);
+        }, 0);
         
         // Color palette (expanded for equal rows)
         const colorPalette = [
@@ -2147,146 +2119,19 @@
                 return cell ? cell.color : null;
         }
         
-// High-performance batched update system with HTML overlay for instant feedback
-        let updatePaintedCellsRAF = null;
-        let pendingCellUpdates = new Set();
-        let paintOverlay = null;
-        let recentPaints = new Map(); // Store recent paints for HTML overlay
-        const RECENT_PAINT_TIME = 3000; // 3 seconds of instant feedback
-        
-        // Create paint overlay for instant visual feedback
-        function createPaintOverlay() {
-            if (paintOverlay) return paintOverlay;
-            
-            const container = map.getContainer();
-            const overlay = document.createElement('div');
-            overlay.id = 'paintOverlay';
-            overlay.style.position = 'absolute';
-            overlay.style.pointerEvents = 'none';
-            overlay.style.zIndex = '9000'; // Above map but below UI
-            overlay.style.willChange = 'transform,width,height';
-            overlay.style.transform = 'translateZ(0)';
-            overlay.style.backfaceVisibility = 'hidden';
-            
-            container.appendChild(overlay);
-            paintOverlay = overlay;
-            return overlay;
-        }
-        
-        // Add paint to HTML overlay for instant feedback
-        function addInstantPaint(gridX, gridY, color) {
-            const overlay = createPaintOverlay();
-            const paintKey = `${gridX},${gridY}`;
-            
-            // Remove existing paint div if any
-            const existingPaint = overlay.querySelector(`[data-key="${paintKey}"]`);
-            if (existingPaint) {
-                existingPaint.remove();
-            }
-            
-            // Create paint div
-            const paintDiv = document.createElement('div');
-            paintDiv.style.position = 'absolute';
-            paintDiv.style.backgroundColor = color;
-            paintDiv.style.pointerEvents = 'none';
-            paintDiv.setAttribute('data-key', paintKey);
-            
-            // Calculate position like hover overlay
-            const bounds = map.getBounds();
-            const lngLat = { lng: (gridX * CELL_SIZE_METERS) / 20037508.34 * 180, lat: Math.atan(Math.sinh((gridY * CELL_SIZE_METERS) / 20037508.34 * Math.PI)) * 180 / Math.PI };
-            
-            try {
-                const point = map.project(lngLat);
-                paintDiv.style.left = `${point.x - 10}px`; // 20px cell size / 2 = 10px offset
-                paintDiv.style.top = `${point.y - 10}px`;
-                paintDiv.style.width = '20px';
-                paintDiv.style.height = '20px';
-                
-                overlay.appendChild(paintDiv);
-                
-                // Store in recent paints with timestamp
-                recentPaints.set(paintKey, {
-                    element: paintDiv,
-                    timestamp: Date.now(),
-                    color: color
-                });
-                
-                // Auto-remove after RECENT_PAINT_TIME
-                setTimeout(() => {
-                    const recentPaint = recentPaints.get(paintKey);
-                    if (recentPaint && recentPaint.element) {
-                        recentPaint.element.remove();
-                        recentPaints.delete(paintKey);
-                    }
-                }, RECENT_PAINT_TIME);
-                
-            } catch (e) {
-                // Map not ready, skip instant feedback
-            }
-        }
-        
-        // Update map projection for HTML overlay paints with performance optimization
-        let overlayUpdateRAF = null;
-        let lastOverlayUpdateTime = 0;
-        const OVERLAY_UPDATE_THROTTLE = 32; // 30fps max for overlay updates
-        
-        function updatePaintOverlayPositions() {
-            if (!paintOverlay) return;
-            
-            // Throttle overlay updates for better performance
-            if (!overlayUpdateRAF) {
-                overlayUpdateRAF = requestAnimationFrame((timestamp) => {
-                    if (timestamp - lastOverlayUpdateTime >= OVERLAY_UPDATE_THROTTLE) {
-                        recentPaints.forEach((paint, key) => {
-                            const [gridX, gridY] = key.split(',').map(Number);
-                            const lngLat = { lng: (gridX * CELL_SIZE_METERS) / 20037508.34 * 180, lat: Math.atan(Math.sinh((gridY * CELL_SIZE_METERS) / 20037508.34 * Math.PI)) * 180 / Math.PI };
-                            
-                            try {
-                                const point = map.project(lngLat);
-                                paint.element.style.left = `${point.x - 10}px`;
-                                paint.element.style.top = `${point.y - 10}px`;
-                            } catch (e) {
-                                // Map not ready
-                            }
-                        });
-                        lastOverlayUpdateTime = timestamp;
-                    }
-                    overlayUpdateRAF = null;
-                });
-            }
-        }
-        
         function updatePaintedCellsDisplay() {
-            if (!map.getSource('painted-cells')) return;
-            
-            // Use RAF for smooth 60fps updates with debouncing and smart batching
-            if (!updatePaintedCellsRAF) {
-                updatePaintedCellsRAF = requestAnimationFrame(() => {
-                    // Only update if there are significant changes or after a delay
-                    const now = Date.now();
-                    const lastUpdate = updatePaintedCellsRAF.lastUpdate || 0;
-                    const timeSinceLastUpdate = now - lastUpdate;
-                    
-                    // Batch process all pending updates
-                    const features = [];
-                    paintedCells.forEach((cell, cellKey) => {
-                        const [x, y] = cellKey.split(',').map(Number);
-                        const cellFeature = generateHoverCell(x, y);
-                        cellFeature.properties.color = cell.color;
-                        features.push(cellFeature);
-                    });
-                    
-                    // Single efficient update
-                    map.getSource('painted-cells').setData({
-                        type: 'FeatureCollection',
-                        features: features
-                    });
-                    
-                    updatePaintedCellsRAF.lastUpdate = now;
-                    updatePaintedCellsRAF = null;
-                    pendingCellUpdates.clear();
+                if (!map.getSource('painted-cells')) return;
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
                 });
-            }
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
         }
         
         function updateCellCounter() {
@@ -2424,24 +2269,17 @@
             }
         }
 
-        // Initialize map layers when ready
+        // Initialize grid when map loads
         map.on('load', () => {
             console.log('Map loaded successfully');
-            initializeMapLayers();
-        });
-        
-        function initializeMapLayers() {
-            console.log('Initializing map layers');
             
-            // Add grid lines source and layer with optimized settings
+            // Add grid lines source and layer
             map.addSource('grid-lines', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
-                },
-                buffer: 0,
-                maxzoom: 24
+                }
             });
             
             map.addLayer({
@@ -2453,21 +2291,17 @@
                     'line-width': 1
                 },
                 layout: {
-                    visibility: 'none',
-                    'line-cap': 'butt',
-                    'line-join': 'miter'
+                    visibility: 'none'
                 }
             });
             
-            // Add grid hover source and layer with performance optimizations
+            // Add grid hover source and layer
             map.addSource('grid-hover', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
-                },
-                buffer: 0,
-                maxzoom: 24
+                }
             });
             
             map.addLayer({
@@ -2483,18 +2317,15 @@
                 }
             });
             
-            // Add painted cells source and layer with performance optimizations
+            // Add painted cells source and layer
             map.addSource('painted-cells', {
                 type: 'geojson',
                 data: {
                     type: 'FeatureCollection',
                     features: []
                 },
-                // Performance optimizations
-                tolerance: 0,
-                buffer: 0,
-                maxzoom: 24,
-                generateId: true
+                // Ensure tiny polygons are not simplified away at low zooms
+                tolerance: 0
             });
 
             map.addLayer({
@@ -2511,20 +2342,8 @@
                 }
             });
 
-            // Add map event to update paint overlay positions during zoom/pan
-            map.on('move', updatePaintOverlayPositions);
-            map.on('zoom', updatePaintOverlayPositions);
-            
-            // Clean up old recent paints periodically
-            setInterval(() => {
-                const now = Date.now();
-                recentPaints.forEach((paint, key) => {
-                    if (now - paint.timestamp > RECENT_PAINT_TIME) {
-                        if (paint.element) paint.element.remove();
-                        recentPaints.delete(key);
-                    }
-                });
-            }, 1000); // Clean every second
+            // Render any preloaded paints now that the source exists
+            updatePaintedCellsDisplay();
 
             // Initial grid update
             updateGridVisibility();
@@ -2533,7 +2352,7 @@
             updatePaintedCellsVisibility();
             // Update zoom hint visibility on load
             updateZoomHintVisibility();
-        }
+        });
 
         // Toggle painted layer visibility depending on visible grid cells
         function updatePaintedCellsVisibility() {
