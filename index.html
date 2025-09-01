@@ -1415,74 +1415,6 @@
         let pendingVisualUpdates = new Set(); // Track cells that need visual updates
         let visualUpdateScheduled = false;
         
-        // CANVAS-BASED RENDERING FOR FASTER PAINTING
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        let canvasInitialized = false;
-        
-        function initCanvas() {
-            if (canvasInitialized) return;
-            
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            canvas.style.position = 'fixed';
-            canvas.style.top = '0';
-            canvas.style.left = '0';
-            canvas.style.pointerEvents = 'none';
-            canvas.style.zIndex = '100';
-            document.body.appendChild(canvas);
-            canvasInitialized = true;
-        }
-        
-        function redrawVisibleCells() {
-            if (!canvasInitialized) initCanvas();
-            
-            // Clear canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Get visible bounds
-            const bounds = map.getBounds();
-            
-            // Draw only visible cells
-            paintedCells.forEach((cell, cellKey) => {
-                const [x, y] = cellKey.split(',').map(Number);
-                const [minLng, minLat] = [
-                    (x * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
-                    (Math.atan(Math.exp((y * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
-                ];
-                
-                if (bounds.contains([minLng, minLat])) {
-                    const [maxLng, maxLat] = [
-                        ((x + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
-                        (Math.atan(Math.exp(((y + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
-                    ];
-                    
-                    const topLeft = map.project([minLng, maxLat]);
-                    const bottomRight = map.project([maxLng, minLat]);
-                    
-                    ctx.fillStyle = cell.color;
-                    ctx.fillRect(
-                        Math.floor(topLeft.x),
-                        Math.floor(topLeft.y),
-                        Math.ceil(bottomRight.x - topLeft.x),
-                        Math.ceil(bottomRight.y - topLeft.y)
-                    );
-                }
-            });
-        }
-        
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            if (canvasInitialized) {
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
-                redrawVisibleCells();
-            }
-        });
-        
-        // Update map move handler
-        map.on('moveend', redrawVisibleCells);
-        
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
           const cellKey = `${gridX},${gridY}`;
@@ -1500,8 +1432,11 @@
                   return;
               }
               
-              // Remove from our data structure
+              // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
+              
+              // Update display immediately
+              updateSingleCellDisplay(gridX, gridY, null);
               
               // RESTORE CHARGE when erasing own paint
               if (USER_ID && USER_CHARGES < USER_CAPACITY) {
@@ -1515,9 +1450,6 @@
               // Queue DB delete with charge restoration
               paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
               schedulePaintBatch();
-              
-              // Redraw the canvas to show the erased cell
-              redrawVisibleCells();
           } else {
               // Require charges for authenticated users
               if (USER_ID) {
@@ -1538,42 +1470,12 @@
                 spendCharge = false;
               }
               
-              // Update our data structure
-              const newCell = { 
-                  color, 
-                  owner: USER_ID, 
-                  owner_name: USER_NAME, 
-                  owner_avatar: USER_AVATAR,
-                  timestamp: Date.now()
-              };
-              paintedCells.set(cellKey, newCell);
+              // INSTANT local update - IMMEDIATE visual feedback
+              const cellData = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
+              paintedCells.set(cellKey, cellData);
               
-              // Draw immediately to canvas
-              if (!canvasInitialized) initCanvas();
-              
-              const [minLng, minLat] = [
-                  (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
-                  (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
-              ];
-              
-              // Only draw if cell is visible
-              if (map.getBounds().contains([minLng, minLat])) {
-                  const [maxLng, maxLat] = [
-                      ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
-                      (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
-                  ];
-                  
-                  const topLeft = map.project([minLng, maxLat]);
-                  const bottomRight = map.project([maxLng, minLat]);
-                  
-                  ctx.fillStyle = color;
-                  ctx.fillRect(
-                      Math.floor(topLeft.x),
-                      Math.floor(topLeft.y),
-                      Math.ceil(bottomRight.x - topLeft.x),
-                      Math.ceil(bottomRight.y - topLeft.y)
-                  );
-              }
+              // Update display immediately
+              updateSingleCellDisplay(gridX, gridY, color);
               
               // Spend charge locally
               if (USER_ID && spendCharge) {
@@ -1583,29 +1485,55 @@
               }
               
               // Queue DB write
-              paintQueue.set(cellKey, { 
-                  gridX, 
-                  gridY, 
-                  color, 
-                  spendCharge, 
-                  timestamp: Date.now(),
-                  owner: USER_ID,
-                  owner_name: USER_NAME,
-                  owner_avatar: USER_AVATAR
-              });
+              paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
               schedulePaintBatch();
           }
         }
         
-        // Process visual updates in a single batch
+        // Optimized function to update a single cell's display immediately
+        function updateSingleCellDisplay(gridX, gridY, color) {
+            if (!map.getSource('painted-cells')) return;
+            
+            const cellKey = `${gridX},${gridY}`;
+            const source = map.getSource('painted-cells');
+            const currentData = source._data || { type: 'FeatureCollection', features: [] };
+            
+            // Find the feature index if it exists
+            const featureIndex = currentData.features.findIndex(f => 
+                f.properties && f.properties.x === gridX && f.properties.y === gridY
+            );
+            
+            if (color === null) {
+                // Remove the feature if it exists
+                if (featureIndex !== -1) {
+                    currentData.features.splice(featureIndex, 1);
+                    source.setData(currentData);
+                }
+            } else {
+                const cellFeature = generateHoverCell(gridX, gridY);
+                cellFeature.properties.color = color;
+                
+                if (featureIndex !== -1) {
+                    // Update existing feature
+                    currentData.features[featureIndex] = cellFeature;
+                } else {
+                    // Add new feature
+                    currentData.features.push(cellFeature);
+                }
+                source.setData(currentData);
+            }
+        }
+        
+        // Process visual updates in a single batch (kept for batch operations if needed)
         function processVisualUpdates() {
             if (pendingVisualUpdates.size === 0) {
                 visualUpdateScheduled = false;
                 return;
             }
             
-            // Redraw the canvas with the latest changes
-            redrawVisibleCells();
+            // Update all pending cells at once
+            updatePaintedCellsDisplay();
+            updateCellCounter();
             
             // Clear pending updates
             pendingVisualUpdates.clear();
@@ -2243,9 +2171,18 @@
         }
         
         function updatePaintedCellsDisplay() {
-            // No need to update the map source directly anymore
-            // as we're using canvas for rendering
-            redrawVisibleCells();
+                if (!map.getSource('painted-cells')) return;
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
+                });
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
         }
         
         function updateCellCounter() {
@@ -2315,7 +2252,6 @@
         function handleMouseClick(e) {
             // Determine grid coordinates from current hover or click location
             const gridCoords = currentHoveredCell || screenToGrid(e.point.x, e.point.y);
-            if (!gridCoords) return;
 
             // If palette is not visible, show pixel info box and do nothing else
             if (!isPaletteVisible()) {
@@ -2353,10 +2289,6 @@
             // Only allow painting if a cell is highlighted (hover active)
             if (!currentHoveredCell) return;
 
-            // Initialize canvas if not already done
-            if (!canvasInitialized) initCanvas();
-
-            // Handle the actual painting
             if (e.originalEvent.button === 0) { // Left click - paint
                 paintCell(gridCoords.x, gridCoords.y, selectedColor);
             } else if (e.originalEvent.button === 2) { // Right click - delete
@@ -2377,15 +2309,6 @@
             if (e.originalEvent.button === 2) { // Right mouse button
                 isRightMouseDown = true;
                 lastPaintedCell = null; // Reset interpolation for new erase stroke
-                
-                // Initialize canvas if not already done
-                if (!canvasInitialized) initCanvas();
-                
-                // Handle immediate erase on click
-                const gridCoords = currentHoveredCell || screenToGrid(e.point.x, e.point.y);
-                if (gridCoords) {
-                    paintCell(gridCoords.x, gridCoords.y, null);
-                }
             }
         }
         
