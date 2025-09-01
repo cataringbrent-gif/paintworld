@@ -1695,38 +1695,59 @@
                 // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - Instant visual updates
                 if (isSpacePressed && selectedColor) {
                     const currentCell = { x: clampedX, y: clampedY };
-                    
+
                     if (lastPaintedCell) {
-                        // Paint all cells between last and current position
+                        // Paint all cells between last and current position - INSTANT VISUAL ONLY
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
-                        
+
                         // INSTANT visual updates - no database calls in loop
                         let hasNewPaints = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
+
+                            // Only paint if not already painted with this color
                             if (!existingCell || existingCell.color !== selectedColor) {
-                                // INSTANT local update
-                                paintedCells.set(cellKey, { 
-                                    color: selectedColor, 
-                                    owner: USER_ID, 
-                                    owner_name: USER_NAME, 
-                                    owner_avatar: USER_AVATAR 
+                                // Check charges before painting
+                                if (USER_ID && USER_CHARGES <= 0) {
+                                    // Stop swipe if no charges
+                                    lastPaintedCell = null;
+                                    showNotification('No more charges');
+                                    break;
+                                }
+
+                                // INSTANT visual update - direct to visual layer
+                                visualPaintLayer.set(cellKey, {
+                                    color: selectedColor,
+                                    owner: USER_ID,
+                                    owner_name: USER_NAME,
+                                    owner_avatar: USER_AVATAR,
+                                    timestamp: Date.now()
                                 });
-                                
+
+                                // INSTANT DOM update for immediate feedback
+                                updateCellVisual(cell.x, cell.y, selectedColor);
+
+                                // Spend charge locally
+                                if (USER_ID) {
+                                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
+                                    updatePaintButtonUI();
+                                }
+
                                 // Queue for database (no await)
-                                paintQueue.set(cellKey, { 
-                                    gridX: cell.x, 
-                                    gridY: cell.y, 
-                                    color: selectedColor, 
-                                    spendCharge: true, 
-                                    timestamp: Date.now() 
+                                paintQueue.set(cellKey, {
+                                    gridX: cell.x,
+                                    gridY: cell.y,
+                                    color: selectedColor,
+                                    spendCharge: USER_ID ? true : false,
+                                    timestamp: Date.now()
                                 });
                                 hasNewPaints = true;
                             }
                         }
-                        
-                        // Single visual update for all cells
+
+                        // Single batch visual update for all cells
                         if (hasNewPaints) {
                             updatePaintedCellsDisplay();
                             updateCellCounter();
@@ -1746,20 +1767,23 @@
                 // ULTRA-FAST SWIPE ERASING WITH INTERPOLATION - Instant visual updates
                 if (isRightMouseDown) {
                     const currentCell = { x: clampedX, y: clampedY };
-                    
+
                     if (lastPaintedCell) {
-                        // Erase all cells between last and current position
+                        // Erase all cells between last and current position - INSTANT VISUAL ONLY
                         const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
-                        
+
                         // INSTANT visual updates - no database calls in loop
                         let hasNewErases = false;
                         for (const cell of interpolatedCells) {
                             const cellKey = `${cell.x},${cell.y}`;
                             const existingCell = paintedCells.get(cellKey);
                             if (existingCell && existingCell.owner === USER_ID) {
-                                // INSTANT local update
-                                paintedCells.delete(cellKey);
-                                
+                                // INSTANT visual update - direct to visual layer
+                                visualPaintLayer.delete(cellKey);
+
+                                // INSTANT DOM update for immediate feedback
+                                updateCellVisual(cell.x, cell.y, null);
+
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
                                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
@@ -1767,20 +1791,20 @@
                                         lastRefillAt = null;
                                     }
                                 }
-                                
+
                                 // Queue for database (no await)
-                                paintQueue.set(cellKey, { 
-                                    gridX: cell.x, 
-                                    gridY: cell.y, 
-                                    color: null, 
-                                    spendCharge: false, 
-                                    timestamp: Date.now() 
+                                paintQueue.set(cellKey, {
+                                    gridX: cell.x,
+                                    gridY: cell.y,
+                                    color: null,
+                                    spendCharge: false,
+                                    timestamp: Date.now()
                                 });
                                 hasNewErases = true;
                             }
                         }
-                        
-                        // Single visual update for all cells
+
+                        // Single batch visual update for all cells
                         if (hasNewErases) {
                             updatePaintedCellsDisplay();
                             updateCellCounter();
