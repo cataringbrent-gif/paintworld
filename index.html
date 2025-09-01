@@ -1434,31 +1434,72 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
-              pendingVisualUpdates.add(cellKey);
+              
+              // Update map source immediately for instant visual feedback
+              if (map.getSource('painted-cells')) {
+                  const features = [];
+                  paintedCells.forEach((cell, key) => {
+                      const [x, y] = key.split(',').map(Number);
+                      const cellFeature = generateHoverCell(x, y);
+                      cellFeature.properties.color = cell.color;
+                      features.push(cellFeature);
+                  });
+                  map.getSource('painted-cells').setData({
+                      type: 'FeatureCollection',
+                      features: features
+                  });
+              }
               
               // RESTORE CHARGE when erasing own paint
               if (USER_ID && USER_CHARGES < USER_CAPACITY) {
                 USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
                 if (USER_CHARGES >= USER_CAPACITY) {
                   lastRefillAt = null;
+                }
+                updatePaintButtonUI();
+              }
+              
+              // Queue DB delete with charge restoration
               paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
               schedulePaintBatch();
           } else {
-              // Check if we have charges if spending is required
-              const spendCharge = USER_CHARGES > 0 && (!cell || cell.owner !== USER_ID);
-              if (spendCharge && USER_CHARGES <= 0) {
-                  showNotification('No more paint charges!');
+              // Require charges for authenticated users
+              if (USER_ID) {
+                if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
+              }
+              if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
+                  showNotification();
                   return;
               }
               
-              // Check if this is actually a change
-              if (cell && cell.color === color && cell.owner === USER_ID) {
-                  return; // No change needed
+              // If repainting a cell we already own:
+              let spendCharge = true;
+              if (cell && USER_ID && cell.owner === USER_ID) {
+                if (cell.color === color) {
+                  updatePaintButtonUI();
+                  return;
+                }
+                spendCharge = false;
               }
               
               // INSTANT local update - IMMEDIATE visual feedback
-              paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-              pendingVisualUpdates.add(cellKey);
+              const newCell = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
+              paintedCells.set(cellKey, newCell);
+              
+              // Update map source immediately for instant visual feedback
+              if (map.getSource('painted-cells')) {
+                  const features = [];
+                  paintedCells.forEach((cell, key) => {
+                      const [x, y] = key.split(',').map(Number);
+                      const cellFeature = generateHoverCell(x, y);
+                      cellFeature.properties.color = cell.color;
+                      features.push(cellFeature);
+                  });
+                  map.getSource('painted-cells').setData({
+                      type: 'FeatureCollection',
+                      features: features
+                  });
+              }
               
               // Spend charge locally
               if (USER_ID && spendCharge) {
@@ -1472,35 +1513,24 @@
               schedulePaintBatch();
           }
           
-          // Schedule visual update if not already scheduled
-          if (!visualUpdateScheduled) {
-              visualUpdateScheduled = true;
-              // Use requestIdleCallback for better performance during high-frequency updates
-              if (window.requestIdleCallback) {
-                  requestIdleCallback(() => requestAnimationFrame(processVisualUpdates), { timeout: 50 });
-              } else {
-                  requestAnimationFrame(processVisualUpdates);
-              }
-          }
+          // Update cell counter immediately
+          updateCellCounter();
         }
         
-        // Process visual updates in a single batch with requestAnimationFrame for smooth rendering
+        // Process visual updates in a single batch
         function processVisualUpdates() {
-            if (pendingVisualUpdates.size === 0) {
-                visualUpdateScheduled = false;
-                return;
-            }
-            
-            // Use requestAnimationFrame for smooth rendering
-            requestAnimationFrame(() => {
-                // Update all pending cells at once
-                updatePaintedCellsDisplay();
-                updateCellCounter();
-                
-                // Clear pending updates
-                pendingVisualUpdates.clear();
-                visualUpdateScheduled = false;
-            });
+              if (pendingVisualUpdates.size === 0) {
+                  visualUpdateScheduled = false;
+                  return;
+              }
+              
+              // Update all pending cells at once
+              updatePaintedCellsDisplay();
+              updateCellCounter();
+              
+              // Clear pending updates
+              pendingVisualUpdates.clear();
+              visualUpdateScheduled = false;
         }
             
             function schedulePaintBatch() {
@@ -2133,50 +2163,19 @@
                 return cell ? cell.color : null;
         }
         
-        let lastPaintedCellsData = new Map();
-
         function updatePaintedCellsDisplay() {
-            if (!map.getSource('painted-cells')) return;
-            
-            const features = [];
-            const updatedCells = new Map();
-            let hasChanges = false;
-            
-            // Check for changes and build new features
-            paintedCells.forEach((cell, cellKey) => {
-                const [x, y] = cellKey.split(',').map(Number);
-                const cellFeature = generateHoverCell(x, y);
-                cellFeature.properties.color = cell.color;
-                features.push(cellFeature);
-                
-                // Check if cell has changed
-                const cellData = JSON.stringify(cell);
-                if (lastPaintedCellsData.get(cellKey) !== cellData) {
-                    hasChanges = true;
-                    updatedCells.set(cellKey, cellData);
-                }
-            });
-            
-            // Check for removed cells
-            if (lastPaintedCellsData.size !== paintedCells.size) {
-                hasChanges = true;
-            } else {
-                for (const key of lastPaintedCellsData.keys()) {
-                    if (!paintedCells.has(key)) {
-                        hasChanges = true;
-                        break;
-                    }
-                }
-            }
-            
-            // Only update if there are changes
-            if (hasChanges) {
+                if (!map.getSource('painted-cells')) return;
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
+                });
                 map.getSource('painted-cells').setData({
                     type: 'FeatureCollection',
                     features: features
                 });
-                lastPaintedCellsData = updatedCells;
-            }
         }
         
         function updateCellCounter() {
