@@ -1408,7 +1408,128 @@
               });
             });
 
-                    // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
+                    // CANVAS-BASED PAINTING SYSTEM - Optimized for performance
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        let canvasInitialized = false;
+        let paintAnimationFrame = null;
+        let lastPaintTime = 0;
+        const PAINT_INTERVAL = 16; // ~60fps
+        
+        function initCanvas() {
+            if (canvasInitialized) return;
+            
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.zIndex = '100';
+            document.body.appendChild(canvas);
+            canvasInitialized = true;
+        }
+        
+        // Optimized paint function with interpolation
+        function optimizedPaintCell(gridX, gridY, color, isFinal = false) {
+            if (!canvasInitialized) initCanvas();
+            
+            const cellKey = `${gridX},${gridY}`;
+            const existingCell = paintedCells.get(cellKey);
+            
+            if (!existingCell || existingCell.color !== color) {
+                // Get cell bounds in screen coordinates
+                const [minLng, minLat] = [
+                    (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                    (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                ];
+                const [maxLng, maxLat] = [
+                    ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                    (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                ];
+                
+                const topLeft = map.project([minLng, maxLat]);
+                const bottomRight = map.project([maxLng, minLat]);
+                
+                // Draw on canvas
+                ctx.fillStyle = color;
+                ctx.fillRect(
+                    Math.floor(topLeft.x),
+                    Math.floor(topLeft.y),
+                    Math.ceil(bottomRight.x - topLeft.x),
+                    Math.ceil(bottomRight.y - topLeft.y)
+                );
+                
+                // Queue for database update
+                paintQueue.set(cellKey, { 
+                    gridX, 
+                    gridY, 
+                    color, 
+                    owner: USER_ID,
+                    owner_name: USER_NAME,
+                    owner_avatar: USER_AVATAR,
+                    timestamp: Date.now(),
+                    spendCharge: true
+                });
+                
+                // Update local cache
+                paintedCells.set(cellKey, {
+                    color,
+                    owner: USER_ID,
+                    owner_name: USER_NAME,
+                    owner_avatar: USER_AVATAR,
+                    timestamp: Date.now()
+                });
+                
+                return true;
+            }
+            return false;
+        }
+        
+        // Clear the canvas when needed
+        function clearCanvas() {
+            if (ctx) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (canvasInitialized) {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                // Redraw all cells on resize
+                clearCanvas();
+                redrawAllCells();
+            }
+        });
+        
+        // Redraw all cells (for after zoom/pan)
+        function redrawAllCells() {
+            if (!canvasInitialized) return;
+            
+            clearCanvas();
+            const bounds = map.getBounds();
+            
+            // Only redraw visible cells for performance
+            for (const [cellKey, cell] of paintedCells.entries()) {
+                const [x, y] = cellKey.split(',').map(Number);
+                const [minLng, minLat] = [
+                    (x * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                    (Math.atan(Math.exp((y * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                ];
+                
+                // Check if cell is in view
+                if (bounds.contains([minLng, minLat])) {
+                    optimizedPaintCell(x, y, cell.color);
+                }
+            }
+        }
+        
+        // Update on map move
+        map.on('moveend', redrawAllCells);
+        
+        // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
         let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
         let paintBatchTimeout = null;
         const PAINT_BATCH_DELAY = 50; // ms - Increased for better batching
@@ -1430,6 +1551,28 @@
               if (cell.owner !== USER_ID) {
                   showNotification('You can only delete your own paint.');
                   return;
+              }
+              
+              // Clear from canvas
+              if (canvasInitialized) {
+                  const [minLng, minLat] = [
+                      (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                      (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                  ];
+                  const [maxLng, maxLat] = [
+                      ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                      (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                  ];
+                  
+                  const topLeft = map.project([minLng, maxLat]);
+                  const bottomRight = map.project([maxLng, minLat]);
+                  
+                  ctx.clearRect(
+                      Math.floor(topLeft.x),
+                      Math.floor(topLeft.y),
+                      Math.ceil(bottomRight.x - topLeft.x),
+                      Math.ceil(bottomRight.y - topLeft.y)
+                  );
               }
               
               // INSTANT local update - IMMEDIATE visual feedback
@@ -1651,56 +1794,75 @@
                 // Always update immediately - no cell comparison
                 currentHoveredCell = { x: clampedX, y: clampedY };
                 
-                // ULTRA-FAST SWIPE PAINTING WITH INTERPOLATION - Instant visual updates
+                // OPTIMIZED SWIPE PAINTING WITH CANVAS RENDERING
                 if (isSpacePressed && selectedColor) {
                     const currentCell = { x: clampedX, y: clampedY };
+                    const now = performance.now();
                     
-                    if (lastPaintedCell) {
-                        // Paint all cells between last and current position
-                        const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                    // Throttle painting for performance
+                    if (now - lastPaintTime < PAINT_INTERVAL && lastPaintedCell) {
+                        // Skip this frame if we're painting too fast
+                        if (paintAnimationFrame) return;
                         
-                        // INSTANT visual updates - no database calls in loop
-                        let hasNewPaints = false;
-                        for (const cell of interpolatedCells) {
-                            const cellKey = `${cell.x},${cell.y}`;
-                            const existingCell = paintedCells.get(cellKey);
-                            if (!existingCell || existingCell.color !== selectedColor) {
-                                // INSTANT local update
-                                paintedCells.set(cellKey, { 
-                                    color: selectedColor, 
-                                    owner: USER_ID, 
-                                    owner_name: USER_NAME, 
-                                    owner_avatar: USER_AVATAR 
-                                });
+                        paintAnimationFrame = requestAnimationFrame(() => {
+                            paintAnimationFrame = null;
+                            lastPaintTime = now;
+                            
+                            if (lastPaintedCell) {
+                                const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                                let hasNewPaints = false;
                                 
-                                // Queue for database (no await)
-                                paintQueue.set(cellKey, { 
-                                    gridX: cell.x, 
-                                    gridY: cell.y, 
-                                    color: selectedColor, 
-                                    spendCharge: true, 
-                                    timestamp: Date.now() 
-                                });
-                                hasNewPaints = true;
+                                // Process cells in chunks to avoid blocking the main thread
+                                const processChunk = (startIdx) => {
+                                    const chunkSize = 50; // Process 50 cells per frame
+                                    const endIdx = Math.min(startIdx + chunkSize, interpolatedCells.length);
+                                    
+                                    for (let i = startIdx; i < endIdx; i++) {
+                                        const cell = interpolatedCells[i];
+                                        hasNewPaints = optimizedPaintCell(cell.x, cell.y, selectedColor) || hasNewPaints;
+                                    }
+                                    
+                                    if (endIdx < interpolatedCells.length) {
+                                        // Process next chunk in next frame
+                                        requestAnimationFrame(() => processChunk(endIdx));
+                                    } else if (hasNewPaints) {
+                                        // Final update after all chunks are processed
+                                        updateCellCounter();
+                                        schedulePaintBatch();
+                                    }
+                                };
+                                
+                                processChunk(0);
                             }
+                            
+                            lastPaintedCell = currentCell;
+                        });
+                        
+                        return;
+                    }
+                    
+                    lastPaintTime = now;
+                    
+                    // Regular painting (not throttled)
+                    if (lastPaintedCell) {
+                        const interpolatedCells = getLineCells(lastPaintedCell.x, lastPaintedCell.y, clampedX, clampedY);
+                        let hasNewPaints = false;
+                        
+                        for (const cell of interpolatedCells) {
+                            hasNewPaints = optimizedPaintCell(cell.x, cell.y, selectedColor) || hasNewPaints;
                         }
                         
-                        // Queue visual updates for next animation frame
                         if (hasNewPaints) {
-                            for (const cell of interpolatedCells) {
-                                pendingCells.add(`${cell.x},${cell.y}`);
-                            }
                             updateCellCounter();
                             schedulePaintBatch();
                         }
                     } else {
                         // First paint - just paint current cell
-                        const cellKey = `${clampedX},${clampedY}`;
-                        const existingCell = paintedCells.get(cellKey);
-                        if (!existingCell || existingCell.color !== selectedColor) {
-                            paintCell(clampedX, clampedY, selectedColor);
-                        }
+                        optimizedPaintCell(clampedX, clampedY, selectedColor, true);
+                        updateCellCounter();
+                        schedulePaintBatch();
                     }
+                    
                     lastPaintedCell = currentCell;
                 }
                 
@@ -1741,11 +1903,9 @@
                             }
                         }
                         
-                        // Queue visual updates for next animation frame
+                        // Single visual update for all cells
                         if (hasNewErases) {
-                            for (const cell of interpolatedCells) {
-                                pendingCells.add(`${cell.x},${cell.y}`);
-                            }
+                            updatePaintedCellsDisplay();
                             updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
@@ -1904,42 +2064,21 @@
             return cells;
         }
 
-        // Optimized mousemove handler with requestAnimationFrame
-        const mapCanvas = map.getCanvasContainer();
-        const handleMouseMove = (e) => {
-            // Convert DOM mouse coordinates to MapLibre point format
-            const rect = mapCanvas.getBoundingClientRect();
-            lastMouseX = e.clientX - rect.left;
-            lastMouseY = e.clientY - rect.top;
-            
-            const now = performance.now();
-            // Throttle to ~60fps
-            if (now - lastFrameTime < 16) {
-                return;
-            }
-            lastFrameTime = now;
-            
-            // Use requestAnimationFrame for smooth visual updates
-            if (!isRendering) {
-                isRendering = true;
-                requestAnimationFrame(() => {
-                    updateHighlight();
-                    isRendering = false;
-                    
-                    // Process any pending cell updates
-                    if (pendingCells.size > 0) {
-                        updatePaintedCellsDisplay(Array.from(pendingCells));
-                        pendingCells.clear();
-                    }
-                });
-            } else {
-                // If we're already rendering, just update the highlight for smoother tracking
+        // Add direct DOM mousemove listener IMMEDIATELY - no waiting for map load
+        setTimeout(() => {
+            const mapCanvas = map.getCanvasContainer();
+            mapCanvas.addEventListener('mousemove', (e) => {
+                // Convert DOM mouse coordinates to MapLibre point format
+                const rect = mapCanvas.getBoundingClientRect();
+                lastMouseX = e.clientX - rect.left;
+                lastMouseY = e.clientY - rect.top;
+                
+                // Immediate update without waiting for requestAnimationFrame
                 updateHighlight();
-            }
-        };
-        
-        // Add the optimized mousemove listener
-        mapCanvas.addEventListener('mousemove', handleMouseMove, { passive: true });
+            });
+            // Ensure overlay exists
+            createHoverOverlay();
+        }, 0);
         
         // Color palette (expanded for equal rows)
         const colorPalette = [
@@ -2162,95 +2301,36 @@
                 return cell ? cell.color : null;
         }
         
-        function updatePaintedCellsDisplay(cellKeys = null) {
-            if (!map.getSource('painted-cells')) return;
-            
-            const source = map.getSource('painted-cells');
-            const currentData = source.serialize() || { type: 'FeatureCollection', features: [] };
-            
-            // Get visible bounds with padding for pre-loading
-            const visibleCells = getVisibleGridCells();
-            const padding = 10; // Number of cells to pre-load around the viewport
-            
-            const minX = Math.floor(visibleCells.minX) - padding;
-            const maxX = Math.ceil(visibleCells.maxX) + padding;
-            const minY = Math.floor(visibleCells.minY) - padding;
-            const maxY = Math.ceil(visibleCells.maxY) + padding;
-            
-            // Create a map of existing features for faster lookups
-            const featureMap = new Map();
-            currentData.features.forEach((feature, index) => {
-                const [x, y] = feature.geometry.coordinates[0][0];
-                featureMap.set(`${x},${y}`, { feature, index });
-            });
-            
-            // Process updates
-            let features = [...currentData.features];
-            
-            // If specific cells are provided, only update those
-            if (cellKeys && cellKeys.length > 0) {
-                cellKeys.forEach(cellKey => {
+        function updatePaintedCellsDisplay() {
+                if (!map.getSource('painted-cells')) return;
+                const features = [];
+                paintedCells.forEach((cell, cellKey) => {
                     const [x, y] = cellKey.split(',').map(Number);
-                    const cell = paintedCells.get(cellKey);
-                    
-                    // Skip cells outside viewport + padding
-                    if (x < minX || x > maxX || y < minY || y > maxY) {
-                        return;
-                    }
-                    
-                    const existing = featureMap.get(cellKey);
-                    
-                    if (cell) {
-                        // Add or update cell
-                        const newFeature = createCellFeature(x, y, cell.color);
-                        if (existing) {
-                            features[existing.index] = newFeature;
-                        } else {
-                            features.push(newFeature);
-                        }
-                    } else {
-                        // Remove cell if it exists
-                        if (existing) {
-                            features.splice(existing.index, 1);
-                        }
-                    }
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    features.push(cellFeature);
                 });
-            } else {
-                // Full update - only include cells in or near viewport
-                features = [];
-                paintedCells.forEach((cell, key) => {
-                    const [x, y] = key.split(',').map(Number);
-                    if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-                        features.push(createCellFeature(x, y, cell.color));
-                    }
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
                 });
-            }
-            
-            // Update the source data in a single operation
-            source.setData({
-                type: 'FeatureCollection',
-                features: features
-            });
-            
-            // Helper function to create a cell feature
-            function createCellFeature(x, y, color) {
-                return {
-                    type: 'Feature',
-                    properties: { color },
-                    geometry: {
-                        type: 'Polygon',
-                        coordinates: [[
-                            [x, y],
-                            [x + 1, y],
-                            [x + 1, y + 1],
-                            [x, y + 1],
-                            [x, y]
-                        ]]
-                    }
-                };
-            }
         }
         
+        function updateCellCounter() {
+            // No number needed, just keep the button text as 'Paint'
+        }
+        
+        function showNotification(message) {
+            // Notifications disabled: no-op
+            return;
+        }
+        
+        function checkPaintingEnabled() {
+            const visibleCells = getVisibleGridCells();
+            isPaintingEnabled = visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD;
+            return isPaintingEnabled;
+        }
+
         // Check if the color palette is currently visible
         function isPaletteVisible() {
             const paletteEl = document.getElementById('colorPalette');
@@ -2285,10 +2365,8 @@
         // Performance optimization variables
         let mouseMoveTimeout = null;
         let isMapMoving = false;
-        let lastFrameTime = 0;
-        let isRendering = false;
-        let pendingCells = new Set();
-        // lastMouseX and lastMouseY are already declared earlier in the code
+        
+        // OLD MOUSE HANDLER REMOVED - Using instant highlighting system instead
 
         // Handle mouse leave
         function handleMouseLeave() {
