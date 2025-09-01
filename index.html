@@ -1415,40 +1415,22 @@
         let pendingVisualUpdates = new Set(); // Track cells that need visual updates
         let visualUpdateScheduled = false;
         
-        // INSTANT PAINTING - No database calls during painting
-        function paintCell(gridX, gridY, color) {
+        // INSTANT PAINTING - Visual updates first, database updates in background
+        function paintCell(gridX, gridY, color, isDrag = false) {
           const cellKey = `${gridX},${gridY}`;
           const cell = paintedCells.get(cellKey);
 
-          if (!supabase || !USER_ID) {
-              showNotification('Storage not configured yet');
-              return;
-          }
-
+          // For erasing
           if (color === null) {
-              if (!cell) return; // nothing to erase
+              if (!cell) return false; // nothing to erase
               if (cell.owner !== USER_ID) {
-                  showNotification('You can only delete your own paint.');
-                  return;
+                  if (!isDrag) showNotification('You can only delete your own paint.');
+                  return false;
               }
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
-              
-              // Update map source immediately for instant visual feedback
-              if (map.getSource('painted-cells')) {
-                  const features = [];
-                  paintedCells.forEach((cell, key) => {
-                      const [x, y] = key.split(',').map(Number);
-                      const cellFeature = generateHoverCell(x, y);
-                      cellFeature.properties.color = cell.color;
-                      features.push(cellFeature);
-                  });
-                  map.getSource('painted-cells').setData({
-                      type: 'FeatureCollection',
-                      features: features
-                  });
-              }
+              pendingVisualUpdates.add(cellKey);
               
               // RESTORE CHARGE when erasing own paint
               if (USER_ID && USER_CHARGES < USER_CAPACITY) {
@@ -1462,10 +1444,20 @@
               // Queue DB delete with charge restoration
               paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
               schedulePaintBatch();
+              return true;
           } else {
-              // Require charges for authenticated users
+              // Check charges for authenticated users
               if (USER_ID) {
-                if (USER_CHARGES <= 0) { showNotification('No more charges'); return; }
+                if (USER_CHARGES <= 0) { 
+                  if (!isDrag) showNotification('No more charges'); 
+                  return false; 
+                }
+                
+                // Only consume charge on first cell in a drag operation
+                if (!isDrag) {
+                  USER_CHARGES--;
+                  updatePaintButtonUI();
+                }
               }
               if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
                   showNotification();
@@ -1483,38 +1475,21 @@
               }
               
               // INSTANT local update - IMMEDIATE visual feedback
-              const newCell = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
-              paintedCells.set(cellKey, newCell);
+              paintedCells.set(cellKey, { color, owner: USER_ID, timestamp: Date.now() });
+              pendingVisualUpdates.add(cellKey);
               
-              // Update map source immediately for instant visual feedback
-              if (map.getSource('painted-cells')) {
-                  const features = [];
-                  paintedCells.forEach((cell, key) => {
-                      const [x, y] = key.split(',').map(Number);
-                      const cellFeature = generateHoverCell(x, y);
-                      cellFeature.properties.color = cell.color;
-                      features.push(cellFeature);
-                  });
-                  map.getSource('painted-cells').setData({
-                      type: 'FeatureCollection',
-                      features: features
-                  });
-              }
-              
-              // Spend charge locally
-              if (USER_ID && spendCharge) {
-                USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
-                updatePaintButtonUI();
-              }
-              
-              // Queue DB write
-              paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
+              // Queue DB update
+              paintQueue.set(cellKey, { gridX, gridY, color, timestamp: Date.now() });
               schedulePaintBatch();
+              
+              return true;
           }
           
-          // Update cell counter immediately
-          updateCellCounter();
+          // Schedule visual update if not already scheduled
+          if (!visualUpdateScheduled) {
+              visualUpdateScheduled = true;
+              requestAnimationFrame(processVisualUpdates);
+          }
         }
         
         // Process visual updates in a single batch
@@ -1695,8 +1670,7 @@
                                 paintedCells.set(cellKey, { 
                                     color: selectedColor, 
                                     owner: USER_ID, 
-                                    owner_name: USER_NAME, 
-                                    owner_avatar: USER_AVATAR 
+                                    timestamp: Date.now() 
                                 });
                                 
                                 // Queue for database (no await)
@@ -1704,7 +1678,6 @@
                                     gridX: cell.x, 
                                     gridY: cell.y, 
                                     color: selectedColor, 
-                                    spendCharge: true, 
                                     timestamp: Date.now() 
                                 });
                                 hasNewPaints = true;
@@ -1758,7 +1731,6 @@
                                     gridX: cell.x, 
                                     gridY: cell.y, 
                                     color: null, 
-                                    spendCharge: false, 
                                     timestamp: Date.now() 
                                 });
                                 hasNewErases = true;
@@ -1929,14 +1901,30 @@
         // Add direct DOM mousemove listener IMMEDIATELY - no waiting for map load
         setTimeout(() => {
             const mapCanvas = map.getCanvasContainer();
+            let lastPaintedCell = null;
+            
             mapCanvas.addEventListener('mousemove', (e) => {
                 // Convert DOM mouse coordinates to MapLibre point format
                 const rect = mapCanvas.getBoundingClientRect();
                 lastMouseX = e.clientX - rect.left;
                 lastMouseY = e.clientY - rect.top;
                 
-                // Immediate update without waiting for requestAnimationFrame
-                updateHighlight();
+                // Update hover highlight
+                const point = new mapboxgl.Point(lastMouseX, lastMouseY);
+                updateHtmlHighlight(point);
+                
+                // Handle painting on drag - use requestAnimationFrame for smooth painting
+                if (isMouseDown && currentColor !== null) {
+                    const gridCoords = screenToGrid(point.x, point.y);
+                    if (gridCoords) {
+                        const cellKey = `${gridCoords.x},${gridCoords.y}`;
+                        // Only paint if we haven't already painted this cell in this drag
+                        if (cellKey !== lastPaintedCell) {
+                            paintCell(gridCoords.x, gridCoords.y, currentColor, true);
+                            lastPaintedCell = cellKey;
+                        }
+                    }
+                }
             });
             // Ensure overlay exists
             createHoverOverlay();
