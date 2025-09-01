@@ -1416,15 +1416,45 @@
         // Initialize canvas overlay
         function initCanvas() {
             if (canvasInitialized) return;
+            console.log('Initializing canvas...');
+            
+            // Set canvas dimensions to match viewport
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            
+            // Style the canvas to ensure it's visible and properly layered
             canvas.style.position = 'fixed';
             canvas.style.top = '0';
             canvas.style.left = '0';
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
             canvas.style.pointerEvents = 'none';
-            canvas.style.zIndex = '1000';
+            canvas.style.zIndex = '10'; // Lower z-index to be above map but below UI
+            canvas.style.display = 'block';
+            canvas.style.visibility = 'visible';
+            canvas.style.opacity = '1';
+            canvas.style.backgroundColor = 'rgba(0,0,0,0.01)'; // Slightly visible for debugging
+            
+            // Make sure map has proper z-index
+            const mapContainer = document.getElementById('map');
+            if (mapContainer) {
+                mapContainer.style.position = 'relative';
+                mapContainer.style.zIndex = '1';
+            }
+            
+            // Make sure UI elements have higher z-index
+            const colorPalette = document.getElementById('colorPalette');
+            if (colorPalette) {
+                colorPalette.style.zIndex = '100';
+            }
+            
+            // Add to document
             document.body.appendChild(canvas);
             canvasInitialized = true;
+            console.log('Canvas initialized');
+            
+            // Force a redraw of painted cells
+            updatePaintedCellsDisplay();
         }
         
         // Handle window resize
@@ -1481,12 +1511,18 @@
         
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
-            if (!canvasInitialized) initCanvas();
+            console.log(`paintCell called with gridX: ${gridX}, gridY: ${gridY}, color: ${color}`);
+            if (!canvasInitialized) {
+                console.log('Initializing canvas from paintCell');
+                initCanvas();
+            }
             
             const cellKey = `${gridX},${gridY}`;
             const cell = paintedCells.get(cellKey);
+            console.log('Current cell state:', cell);
 
             if (!supabase || !USER_ID) {
+                console.log('Supabase not configured or user not logged in');
                 showNotification('Storage not configured yet');
                 return;
             }
@@ -2185,7 +2221,22 @@
 
         // Update grid data
         function updateGrid() {
-            if (!gridVisible) return;
+            // Always update the grid visibility based on current viewport
+            updateGridVisibility();
+            
+            // If grid is not visible, we can skip the rest
+            if (!gridVisible) {
+                return;
+            }
+            
+            // Make sure canvas is initialized and visible
+            if (!canvasInitialized) {
+                console.log('Initializing canvas from updateGrid');
+                initCanvas();
+            } else {
+                // Force a redraw of the canvas when grid updates
+                updatePaintedCellsDisplay();
+            }
             
             // Grid lines are not rendered, so we don't need to update them
             // Only hover functionality is active
@@ -2208,16 +2259,73 @@
         
         function shouldShowPaintedCells() {
             const visibleCells = getVisibleGridCells();
-            return visibleCells.width <= 4000 && visibleCells.height <= 4000;
+            return visibleCells.x <= 4000 && visibleCells.y <= 4000;
+        }
+        
+        function debugCanvasState() {
+            console.group('Canvas Debug Info');
+            console.log('Canvas initialized:', canvasInitialized);
+            console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
+            console.log('Canvas display style:', canvas.style.display);
+            console.log('Canvas visibility:', window.getComputedStyle(canvas).visibility);
+            console.log('Canvas z-index:', canvas.style.zIndex);
+            console.log('Canvas position:', canvas.style.position);
+            console.log('Canvas in DOM:', document.body.contains(canvas));
+            console.groupEnd();
+        }
+
+        function drawTestPattern() {
+            if (!canvasInitialized || !ctx) return;
+            
+            console.log('Drawing test pattern...');
+            
+            // Draw a simple test pattern
+            ctx.fillStyle = 'red';
+            ctx.fillRect(10, 10, 50, 50);
+            
+            ctx.fillStyle = 'blue';
+            ctx.fillRect(70, 10, 50, 50);
+            
+            ctx.fillStyle = 'green';
+            ctx.fillRect(130, 10, 50, 50);
+            
+            // Add some text
+            ctx.fillStyle = 'black';
+            ctx.font = '16px Arial';
+            ctx.fillText('Test Pattern - Canvas is working!', 10, 90);
         }
         
         function updatePaintedCellsDisplay() {
-            if (!canvasInitialized) return;
+            // Draw test pattern first to verify canvas is working
+            drawTestPattern();
+            
+            // Ensure canvas is properly initialized
+            if (!canvas || !ctx) {
+                console.error('Canvas or context not available');
+                canvasInitialized = false;
+                initCanvas();
+                return;
+            }
+            
+            debugCanvasState(); // Log canvas state before update
+            
+            if (!canvasInitialized) {
+                console.log('Canvas not initialized, attempting to initialize...');
+                initCanvas();
+                if (!canvasInitialized) {
+                    console.error('Failed to initialize canvas');
+                    return;
+                }
+            }
             
             // Check if we should show painted cells (4000x4000 or fewer cells visible)
-            if (!shouldShowPaintedCells()) {
+            const shouldShow = shouldShowPaintedCells();
+            console.log('Should show painted cells:', shouldShow, 'Visible cells:', getVisibleGridCells());
+            
+            if (!shouldShow) {
                 // Hide the canvas if we're zoomed out too far
                 canvas.style.display = 'none';
+                console.log('Hiding canvas - zoomed out too far');
                 return;
             }
             
@@ -2231,6 +2339,7 @@
             const bounds = map.getBounds();
             
             // Draw only visible cells for performance
+            let cellsDrawn = 0;
             paintedCells.forEach((cell, cellKey) => {
                 const [x, y] = cellKey.split(',').map(Number);
                 
@@ -2243,22 +2352,27 @@
                 // Only draw if cell is in viewport
                 if (bounds.contains([minLng, minLat])) {
                     drawCellToCanvas(x, y, cell.color);
+                    cellsDrawn++;
                 }
             });
+            
+            console.log(`Drew ${cellsDrawn} cells on canvas`);
             
             // Still update the map source for other functionality
             if (map.getSource('painted-cells')) {
                 const features = [];
-                const showCells = shouldShowPaintedCells();
                 
                 // Only include cells in the map source if we're zoomed in enough
-                if (showCells) {
+                if (shouldShow) {
+                    let cellsAdded = 0;
                     paintedCells.forEach((cell, cellKey) => {
                         const [x, y] = cellKey.split(',').map(Number);
                         const cellFeature = generateHoverCell(x, y);
                         cellFeature.properties.color = cell.color;
                         features.push(cellFeature);
+                        cellsAdded++;
                     });
+                    console.log(`Added ${cellsAdded} cells to map source`);
                 }
                 
                 map.getSource('painted-cells').setData({
@@ -2406,21 +2520,39 @@
         // Initialize grid when map loads
         // Update canvas on map move/zoom
         map.on('move', () => {
-            if (canvasInitialized) {
+            console.log('Map moved, updating canvas...');
+            if (!canvasInitialized) {
+                console.log('Initializing canvas from move event');
+                initCanvas();
+            } else {
                 updatePaintedCellsDisplay();
             }
         });
         
         map.on('zoom', () => {
-            if (canvasInitialized) {
+            console.log('Map zoomed, updating canvas...');
+            if (!canvasInitialized) {
+                console.log('Initializing canvas from zoom event');
+                initCanvas();
+            } else {
                 updatePaintedCellsDisplay();
             }
+            
+            // Update zoom hint visibility
+            updateZoomHintVisibility();
         });
         
         map.on('load', () => {
             console.log('Map loaded successfully');
             // Initialize canvas after map is loaded
+            console.log('Initializing canvas from map load');
             initCanvas();
+            
+            // Force a redraw after a short delay to ensure everything is ready
+            setTimeout(() => {
+                console.log('Forcing canvas redraw after map load');
+                updatePaintedCellsDisplay();
+            }, 100);
             
             // Add grid lines source and layer
             map.addSource('grid-lines', {
@@ -2872,6 +3004,26 @@
         });
 
         // Google Sign-In removed; using Supabase anonymous auth.
+        
+        // Add debug button
+        const debugBtn = document.createElement('button');
+        debugBtn.textContent = 'Debug Canvas';
+        debugBtn.style.position = 'fixed';
+        debugBtn.style.bottom = '20px';
+        debugBtn.style.right = '20px';
+        debugBtn.style.zIndex = '10000';
+        debugBtn.style.padding = '10px';
+        debugBtn.style.background = '#ff6b6b';
+        debugBtn.style.color = 'white';
+        debugBtn.style.border = 'none';
+        debugBtn.style.borderRadius = '4px';
+        debugBtn.style.cursor = 'pointer';
+        debugBtn.onclick = function() {
+            debugCanvasState();
+            updatePaintedCellsDisplay();
+            console.log('Forcing canvas redraw from debug button');
+        };
+        document.body.appendChild(debugBtn);
     </script>
 
 </body></html>
