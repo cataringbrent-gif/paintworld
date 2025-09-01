@@ -2213,60 +2213,48 @@
         function updatePaintedCellsDisplay() {
             if (!canvasInitialized || !map) return;
             
-            // Use requestAnimationFrame to batch the drawing operations
-            requestAnimationFrame(() => {
-                // Clear the canvas
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                
-                // Get current viewport bounds
-                const bounds = map.getBounds();
-                const ne = bounds.getNorthEast();
-                const sw = bounds.getSouthWest();
-                
-                // Convert bounds to grid coordinates with some padding
-                const padding = 5;
-                const minX = Math.max(0, Math.floor((20037508.34 + (sw.lng * 20037508.34 / 180)) / CELL_SIZE_METERS) - padding);
-                const maxX = Math.min(4000, Math.ceil((20037508.34 + (ne.lng * 20037508.34 / 180)) / CELL_SIZE_METERS) + padding);
-                
-                // Convert latitude to Web Mercator Y
-                const latToY = (lat) => {
-                    return Math.floor((20037508.34 - (Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180)) * 20037508.34 / 180) / CELL_SIZE_METERS);
-                };
-                
-                const minY = Math.max(0, latToY(sw.lat) - padding);
-                const maxY = Math.min(4000, latToY(ne.lat) + padding);
-                
-                // Calculate the number of visible cells in each dimension
-                const visibleCellsX = maxX - minX;
-                const visibleCellsY = maxY - minY;
-                
-                // Only render if we're showing 4000x4000 cells or fewer
-                if (visibleCellsX > 4000 || visibleCellsY > 4000) {
-                    return;
-                }
-                
-                // Batch all draw operations
-                ctx.save();
-                
-                // First pass: collect all cells to draw
-                const cellsToDraw = [];
-                for (let x = minX; x <= maxX; x++) {
-                    for (let y = minY; y <= maxY; y++) {
-                        const cellKey = `${x},${y}`;
-                        const cell = paintedCells.get(cellKey);
-                        if (cell) {
-                            cellsToDraw.push({ x, y, color: cell.color });
-                        }
+            // Clear the canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Get current viewport bounds
+            const bounds = map.getBounds();
+            
+            // Get the current zoom level
+            const zoom = map.getZoom();
+            
+            // Only render cells if zoomed in enough
+            if (zoom < 5) {
+                // If too zoomed out, don't render individual cells
+                return;
+            }
+            
+            // Get the visible grid bounds
+            const ne = bounds.getNorthEast();
+            const sw = bounds.getSouthWest();
+            
+            // Convert bounds to grid coordinates with some padding
+            const padding = 5; // Add some padding to prevent edge artifacts
+            const minX = Math.max(0, Math.floor((20037508.34 + (sw.lng * 20037508.34 / 180)) / CELL_SIZE_METERS) - padding);
+            const maxX = Math.min(4000, Math.ceil((20037508.34 + (ne.lng * 20037508.34 / 180)) / CELL_SIZE_METERS) + padding);
+            
+            // Convert latitude to Web Mercator Y
+            const latToY = (lat) => {
+                return Math.floor((20037508.34 - (Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180)) * 20037508.34 / 180) / CELL_SIZE_METERS);
+            };
+            
+            const minY = Math.max(0, latToY(sw.lat) - padding);
+            const maxY = Math.min(4000, latToY(ne.lat) + padding);
+            
+            // Draw cells in the visible area
+            for (let x = minX; x <= maxX; x++) {
+                for (let y = minY; y <= maxY; y++) {
+                    const cellKey = `${x},${y}`;
+                    const cell = paintedCells.get(cellKey);
+                    if (cell) {
+                        drawCellToCanvas(x, y, cell.color);
                     }
                 }
-                
-                // Second pass: draw all cells in a single batch
-                cellsToDraw.forEach(cell => {
-                    drawCellToCanvas(cell.x, cell.y, cell.color);
-                });
-                
-                ctx.restore();
-            });
+            }
             
             // Still update the map source for other functionality
             if (map.getSource('painted-cells')) {
