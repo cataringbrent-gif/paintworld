@@ -1,13 +1,8 @@
 {
-  "framework": "nextjs",
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
-  "outputDirectory": ".next",
-  "regions": ["iad1"],
-  "functions": {
-    "app/**/*.tsx": {
-      "maxDuration": 30
-    }
-  }
+  "version": 2,
+  "framework": null,
+  "builds": [],
+  "routes": [
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
 }
