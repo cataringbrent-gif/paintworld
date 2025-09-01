@@ -1415,126 +1415,92 @@
         let pendingVisualUpdates = new Set(); // Track cells that need visual updates
         let visualUpdateScheduled = false;
         
-        // INSTANT PAINTING - Optimized for immediate visual feedback
+        // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
-            const cellKey = `${gridX},${gridY}`;
-            const cell = paintedCells.get(cellKey);
+          const cellKey = `${gridX},${gridY}`;
+          const cell = paintedCells.get(cellKey);
 
-            // Fast path: No change needed
-            if (color !== null && cell?.color === color) {
+          if (!supabase || !USER_ID) {
+              showNotification('Storage not configured yet');
+              return;
+          }
+
+          if (color === null) {
+              if (!cell) return; // nothing to erase
+              if (cell.owner !== USER_ID) {
+                  showNotification('You can only delete your own paint.');
+                  return;
+              }
+              
+              // INSTANT local update - IMMEDIATE visual feedback
+              paintedCells.delete(cellKey);
+              pendingVisualUpdates.add(cellKey);
+              
+              // RESTORE CHARGE when erasing own paint
+              if (USER_ID && USER_CHARGES < USER_CAPACITY) {
+                USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
+                if (USER_CHARGES >= USER_CAPACITY) {
+                  lastRefillAt = null;
+              paintQueue.set(cellKey, { gridX, gridY, color: null, restoreCharge: true, timestamp: Date.now() });
+              schedulePaintBatch();
+          } else {
+              // Check if we have charges if spending is required
+              const spendCharge = USER_CHARGES > 0 && (!cell || cell.owner !== USER_ID);
+              if (spendCharge && USER_CHARGES <= 0) {
+                  showNotification('No more paint charges!');
+                  return;
+              }
+              
+              // Check if this is actually a change
+              if (cell && cell.color === color && cell.owner === USER_ID) {
+                  return; // No change needed
+              }
+              
+              // INSTANT local update - IMMEDIATE visual feedback
+              paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+              pendingVisualUpdates.add(cellKey);
+              
+              // Spend charge locally
+              if (USER_ID && spendCharge) {
+                USER_CHARGES = Math.max(0, USER_CHARGES - 1);
+                lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? Date.now() : null;
                 updatePaintButtonUI();
-                return;
-            }
-
-            if (!supabase || !USER_ID) {
-                showNotification('Storage not configured yet');
-                return;
-            }
-
-            if (color === null) {
-                if (!cell) return; // nothing to erase
-                if (cell.owner !== USER_ID) {
-                    showNotification('You can only delete your own paint.');
-                    return;
-                }
-                
-                // INSTANT local update
-                paintedCells.delete(cellKey);
-                pendingVisualUpdates.add(cellKey);
-                
-                // Update charges immediately
-                if (USER_ID && USER_CHARGES < USER_CAPACITY) {
-                    USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
-                    if (USER_CHARGES >= USER_CAPACITY) lastRefillAt = null;
-                    updatePaintButtonUI();
-                }
-                
-                // Queue DB operation
-                paintQueue.set(cellKey, { 
-                    gridX, 
-                    gridY, 
-                    color: null, 
-                    restoreCharge: true, 
-                    timestamp: performance.now() // More precise timing
-                });
-            } else {
-                // Check charges and limits
-                if (USER_ID && USER_CHARGES <= 0) { 
-                    showNotification('No more charges'); 
-                    return; 
-                }
-                if (paintedCells.size >= MAX_CELLS && !paintedCells.has(cellKey)) {
-                    showNotification('Maximum cells reached');
-                    return;
-                }
-                
-                // Check if we own this cell to avoid spending charges
-                const isOwnCell = cell?.owner === USER_ID;
-                const colorChanged = !cell || cell.color !== color;
-                
-                if (!colorChanged) {
-                    updatePaintButtonUI();
-                    return;
-                }
-                
-                // Update local state
-                const newCell = { 
-                    color, 
-                    owner: USER_ID, 
-                    owner_name: USER_NAME, 
-                    owner_avatar: USER_AVATAR 
-                };
-                paintedCells.set(cellKey, newCell);
-                pendingVisualUpdates.add(cellKey);
-                
-                // Update charges if needed
-                if (USER_ID && !isOwnCell) {
-                    USER_CHARGES = Math.max(0, USER_CHARGES - 1);
-                    lastRefillAt = (USER_CHARGES < USER_CAPACITY) ? performance.now() : null;
-                    updatePaintButtonUI();
-                }
-                
-                // Queue DB operation
-                paintQueue.set(cellKey, { 
-                    gridX, 
-                    gridY, 
-                    color, 
-                    spendCharge: !isOwnCell, 
-                    timestamp: performance.now()
-                });
-            }
-            
-            // Schedule visual update on next frame if not already scheduled
-            if (!visualUpdateScheduled) {
-                visualUpdateScheduled = true;
-                requestAnimationFrame(processVisualUpdates);
-            }
-            
-            // Ensure batch processing is scheduled
-            schedulePaintBatch();
+              }
+              
+              // Queue DB write
+              paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
+              schedulePaintBatch();
+          }
+          
+          // Schedule visual update if not already scheduled
+          if (!visualUpdateScheduled) {
+              visualUpdateScheduled = true;
+              // Use requestIdleCallback for better performance during high-frequency updates
+              if (window.requestIdleCallback) {
+                  requestIdleCallback(() => requestAnimationFrame(processVisualUpdates), { timeout: 50 });
+              } else {
+                  requestAnimationFrame(processVisualUpdates);
+              }
+          }
         }
         
-        // Process visual updates with minimal overhead
+        // Process visual updates in a single batch with requestAnimationFrame for smooth rendering
         function processVisualUpdates() {
             if (pendingVisualUpdates.size === 0) {
                 visualUpdateScheduled = false;
                 return;
             }
             
-            // Throttle visual updates to once per frame
-            const updates = Array.from(pendingVisualUpdates);
-            pendingVisualUpdates.clear();
-            
-            // Update only the changed cells
-            updatePaintedCellsDisplay(updates);
-            updateCellCounter();
-            
-            // Check if more updates are pending
-            if (pendingVisualUpdates.size > 0) {
-                requestAnimationFrame(processVisualUpdates);
-            } else {
+            // Use requestAnimationFrame for smooth rendering
+            requestAnimationFrame(() => {
+                // Update all pending cells at once
+                updatePaintedCellsDisplay();
+                updateCellCounter();
+                
+                // Clear pending updates
+                pendingVisualUpdates.clear();
                 visualUpdateScheduled = false;
-            }
+            });
         }
             
             function schedulePaintBatch() {
@@ -2167,58 +2133,50 @@
                 return cell ? cell.color : null;
         }
         
-        // Cache for cell features to minimize DOM updates
-        const cellFeatureCache = new Map();
-        
-        function updatePaintedCellsDisplay(changedCells) {
+        let lastPaintedCellsData = new Map();
+
+        function updatePaintedCellsDisplay() {
             if (!map.getSource('painted-cells')) return;
             
-            const source = map.getSource('painted-cells');
-            const currentData = source._data || { type: 'FeatureCollection', features: [] };
-            const featureMap = new Map();
+            const features = [];
+            const updatedCells = new Map();
+            let hasChanges = false;
             
-            // Index existing features by cell key
-            currentData.features.forEach(feature => {
-                const key = `${feature.properties.x},${feature.properties.y}`;
-                featureMap.set(key, feature);
+            // Check for changes and build new features
+            paintedCells.forEach((cell, cellKey) => {
+                const [x, y] = cellKey.split(',').map(Number);
+                const cellFeature = generateHoverCell(x, y);
+                cellFeature.properties.color = cell.color;
+                features.push(cellFeature);
+                
+                // Check if cell has changed
+                const cellData = JSON.stringify(cell);
+                if (lastPaintedCellsData.get(cellKey) !== cellData) {
+                    hasChanges = true;
+                    updatedCells.set(cellKey, cellData);
+                }
             });
             
-            // Update changed cells
-            if (changedCells) {
-                changedCells.forEach(cellKey => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cell = paintedCells.get(cellKey);
-                    
-                    if (cell) {
-                        // Update or add cell
-                        const feature = generateHoverCell(x, y);
-                        feature.properties.color = cell.color;
-                        feature.properties.x = x;
-                        feature.properties.y = y;
-                        featureMap.set(cellKey, feature);
-                    } else {
-                        // Remove deleted cell
-                        featureMap.delete(cellKey);
-                    }
-                });
+            // Check for removed cells
+            if (lastPaintedCellsData.size !== paintedCells.size) {
+                hasChanges = true;
             } else {
-                // Full update if no specific cells provided
-                featureMap.clear();
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const feature = generateHoverCell(x, y);
-                    feature.properties.color = cell.color;
-                    feature.properties.x = x;
-                    feature.properties.y = y;
-                    featureMap.set(cellKey, feature);
-                });
+                for (const key of lastPaintedCellsData.keys()) {
+                    if (!paintedCells.has(key)) {
+                        hasChanges = true;
+                        break;
+                    }
+                }
             }
             
-            // Update the source with new features
-            source.setData({
-                type: 'FeatureCollection',
-                features: Array.from(featureMap.values())
-            });
+            // Only update if there are changes
+            if (hasChanges) {
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
+                lastPaintedCellsData = updatedCells;
+            }
         }
         
         function updateCellCounter() {
