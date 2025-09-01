@@ -2207,24 +2207,25 @@
         }
         
         function shouldShowPaintedCells() {
-            const visible = getVisibleGridCells();
-            return visible.width <= 4000 && visible.height <= 4000;
+            const visibleCells = getVisibleGridCells();
+            return visibleCells.width <= 4000 && visibleCells.height <= 4000;
         }
 
         function updatePaintedCellsDisplay() {
             if (!canvasInitialized) return;
             
             // Check if we should show painted cells (4000x4000 or fewer cells visible)
-            const shouldShow = shouldShowPaintedCells();
+            if (!shouldShowPaintedCells()) {
+                // Hide the canvas if we're zoomed out too far
+                canvas.style.display = 'none';
+                return;
+            }
             
-            // Update canvas visibility
-            canvas.style.display = shouldShow ? 'block' : 'none';
+            // Show the canvas if it was hidden
+            canvas.style.display = 'block';
             
             // Clear the canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Only proceed if we should show the cells
-            if (!shouldShow) return;
             
             // Get current viewport bounds
             const bounds = map.getBounds();
@@ -2244,22 +2245,22 @@
                     drawCellToCanvas(x, y, cell.color);
                 }
             });
-            
-            // Still update the map source for other functionality
-            if (map.getSource('painted-cells')) {
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
-            }
-        }
+    
+    // Still update the map source for other functionality
+    if (map.getSource('painted-cells')) {
+        const features = [];
+        paintedCells.forEach((cell, cellKey) => {
+            const [x, y] = cellKey.split(',').map(Number);
+            const cellFeature = generateHoverCell(x, y);
+            cellFeature.properties.color = cell.color;
+            features.push(cellFeature);
+        });
+        map.getSource('painted-cells').setData({
+            type: 'FeatureCollection',
+            features: features
+        });
+    }
+}
         
         function updateCellCounter() {
             // No number needed, just keep the button text as 'Paint'
@@ -2398,14 +2399,6 @@
 
         // Initialize grid when map loads
         // Update canvas on map move/zoom
-        // Update zoom hint visibility
-        function updateZoomHintVisibility() {
-            const zoomHint = document.getElementById('zoomHint');
-            if (!zoomHint) return;
-            
-            zoomHint.style.display = shouldShowPaintedCells() ? 'none' : 'block';
-        }
-        
         map.on('move', () => {
             if (canvasInitialized) {
                 updatePaintedCellsDisplay();
@@ -2419,6 +2412,18 @@
                 updateZoomHintVisibility();
             }
         });
+        
+        // Add zoom hint functionality
+        function updateZoomHintVisibility() {
+            const zoomHint = document.getElementById('zoomHint');
+            if (!zoomHint) return;
+            
+            if (shouldShowPaintedCells()) {
+                zoomHint.style.display = 'none';
+            } else {
+                zoomHint.style.display = 'block';
+            }
+        }
         
         map.on('load', () => {
             console.log('Map loaded successfully');
