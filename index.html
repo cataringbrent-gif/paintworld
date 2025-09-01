@@ -1576,55 +1576,111 @@
               visualUpdateScheduled = false;
         }
             
+            // Track the last processed batch ID to avoid race conditions
+            let lastBatchId = 0;
+            let isProcessingBatch = false;
+            
             function schedulePaintBatch() {
               if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
-              paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
+              
+              // If queue is getting large, process immediately
+              if (paintQueue.size >= 20) {
+                processPaintBatch();
+              } else {
+                paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
+              }
             }
             
             async function processPaintBatch() {
-              if (paintQueue.size === 0) return;
+              if (paintQueue.size === 0 || isProcessingBatch) return;
+              isProcessingBatch = true;
               
-              const batch = Array.from(paintQueue.values());
-              paintQueue.clear();
-              
-              // Process deletes
-              const deletes = batch.filter(p => p.color === null);
-              if (deletes.length > 0) {
-                for (const del of deletes) {
-                  await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
+              try {
+                const currentBatchId = ++lastBatchId;
+                const batch = Array.from(paintQueue.values());
+                
+                // Only keep the most recent update for each cell
+                const latestUpdates = new Map();
+                batch.forEach(update => {
+                  const key = `${update.gridX},${update.gridY}`;
+                  latestUpdates.set(key, update);
+                });
+                
+                // Clear the queue and add back any new updates that came in
+                paintQueue.clear();
+                
+                const updatesToProcess = Array.from(latestUpdates.values());
+                
+                // Process deletes
+                const deletes = updatesToProcess.filter(p => p.color === null);
+                if (deletes.length > 0) {
+                  // Use a transaction for all deletes
+                  const { error } = await supabase.rpc('batch_delete_cells', {
+                    cells_to_delete: deletes.map(d => ({ x: d.gridX, y: d.gridY }))
+                  });
+                  
+                  if (error) throw error;
+                  
+                  // Update charges for deletions that restore charges
+                  const chargeRestores = deletes.filter(p => p.restoreCharge).length;
+                  if (chargeRestores > 0) {
+                    await supabase.rpc('increment_charges', {
+                      user_id: USER_ID,
+                      amount: chargeRestores,
+                      capacity: USER_CAPACITY
+                    });
+                  }
                 }
                 
-                // Update charges for deletions that restore charges
-                const chargeRestores = deletes.filter(p => p.restoreCharge).length;
-                if (chargeRestores > 0) {
-                  await supabase.from('user_paints').update({
-                    charges: USER_CHARGES,
-                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                    capacity: USER_CAPACITY
-                  }).eq('user_id', USER_ID);
+                // Process inserts/updates
+                const inserts = updatesToProcess.filter(p => p.color !== null);
+                if (inserts.length > 0) {
+                  const { error } = await supabase.from('paints').upsert(
+                    inserts.map(ins => ({
+                      x: ins.gridX,
+                      y: ins.gridY,
+                      color: ins.color,
+                      owner: USER_ID,
+                      owner_name: USER_NAME,
+                      owner_avatar: USER_AVATAR
+                    })),
+                    { onConflict: 'x,y' }
+                  );
+                  
+                  if (error) throw error;
+                  
+                  // Update charges for inserts that spend charges
+                  const chargeSpends = inserts.filter(p => p.spendCharge !== false).length;
+                  if (chargeSpends > 0) {
+                    await supabase.rpc('decrement_charges', {
+                      user_id: USER_ID,
+                      amount: chargeSpends,
+                      capacity: USER_CAPACITY
+                    });
+                  }
                 }
-              }
-              
-              // Process paints
-              const paints = batch.filter(p => p.color !== null);
-              if (paints.length > 0) {
-                const upserts = paints.map(p => ({
-                  x: p.gridX, y: p.gridY, color: p.color,
-                  owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
-                }));
-                await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
                 
-                // Update charges in batch
-                const chargeSpends = paints.filter(p => p.spendCharge).length;
-                if (chargeSpends > 0) {
-                  await supabase.from('user_paints').update({
-                    charges: USER_CHARGES,
-                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                    capacity: USER_CAPACITY
-                  }).eq('user_id', USER_ID);
+                // If this is still the most recent batch, we're done
+                if (currentBatchId === lastBatchId) {
+                  // Update local state to match server state
+                  initialLoad();
+                }
+                
+              } catch (error) {
+                console.error('Error processing paint batch:', error);
+                // On error, reload all data to ensure consistency
+                initialLoad();
+              } finally {
+                isProcessingBatch = false;
+                
+                // Process any new updates that came in while we were working
+                if (paintQueue.size > 0) {
+                  schedulePaintBatch();
                 }
               }
             }
+
+            // Initialize the map
             const map = new maplibregl.Map({
                 container: 'map',
                 style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
