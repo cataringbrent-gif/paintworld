@@ -2210,7 +2210,7 @@
             const visibleCells = getVisibleGridCells();
             return visibleCells.width <= 4000 && visibleCells.height <= 4000;
         }
-
+        
         function updatePaintedCellsDisplay() {
             if (!canvasInitialized) return;
             
@@ -2245,21 +2245,27 @@
                     drawCellToCanvas(x, y, cell.color);
                 }
             });
-    
-    // Still update the map source for other functionality
-    if (map.getSource('painted-cells')) {
-        const features = [];
-        paintedCells.forEach((cell, cellKey) => {
-            const [x, y] = cellKey.split(',').map(Number);
-            const cellFeature = generateHoverCell(x, y);
-            cellFeature.properties.color = cell.color;
-            features.push(cellFeature);
-        });
-        map.getSource('painted-cells').setData({
-            type: 'FeatureCollection',
-            features: features
-        });
-    }
+            
+            // Still update the map source for other functionality
+            if (map.getSource('painted-cells')) {
+                const features = [];
+                const showCells = shouldShowPaintedCells();
+                
+                // Only include cells in the map source if we're zoomed in enough
+                if (showCells) {
+                    paintedCells.forEach((cell, cellKey) => {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        const cellFeature = generateHoverCell(x, y);
+                        cellFeature.properties.color = cell.color;
+                        features.push(cellFeature);
+                    });
+                }
+                
+                map.getSource('painted-cells').setData({
+                    type: 'FeatureCollection',
+                    features: features
+                });
+            }
 }
         
         function updateCellCounter() {
@@ -2402,28 +2408,14 @@
         map.on('move', () => {
             if (canvasInitialized) {
                 updatePaintedCellsDisplay();
-                updateZoomHintVisibility();
             }
         });
         
         map.on('zoom', () => {
             if (canvasInitialized) {
                 updatePaintedCellsDisplay();
-                updateZoomHintVisibility();
             }
         });
-        
-        // Add zoom hint functionality
-        function updateZoomHintVisibility() {
-            const zoomHint = document.getElementById('zoomHint');
-            if (!zoomHint) return;
-            
-            if (shouldShowPaintedCells()) {
-                zoomHint.style.display = 'none';
-            } else {
-                zoomHint.style.display = 'block';
-            }
-        }
         
         map.on('load', () => {
             console.log('Map loaded successfully');
