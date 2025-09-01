@@ -1408,22 +1408,88 @@
               });
             });
 
-                    // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
-        let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
+                    // ULTRA-FAST PAINTING SYSTEM - Canvas-based immediate rendering
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        let canvasInitialized = false;
+        
+        // Initialize canvas overlay
+        function initCanvas() {
+            if (canvasInitialized) return;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.zIndex = '1000';
+            document.body.appendChild(canvas);
+            canvasInitialized = true;
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (canvasInitialized) {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                updatePaintedCellsDisplay();
+            }
+        });
+        
+        // Paint queue for database updates
+        let paintQueue = new Map();
         let paintBatchTimeout = null;
-        const PAINT_BATCH_DELAY = 50; // ms - Increased for better batching
-        let pendingVisualUpdates = new Set(); // Track cells that need visual updates
+        const PAINT_BATCH_DELAY = 50;
+        let pendingVisualUpdates = new Set();
         let visualUpdateScheduled = false;
+        
+        // Draw a cell to the canvas immediately
+        function drawCellToCanvas(gridX, gridY, color) {
+            if (!canvasInitialized) initCanvas();
+            
+            const [minLng, minLat] = [
+                (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+            ];
+            const [maxLng, maxLat] = [
+                ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+            ];
+            
+            const topLeft = map.project([minLng, maxLat]);
+            const bottomRight = map.project([maxLng, minLat]);
+            
+            if (color === null) {
+                // Clear the cell
+                ctx.clearRect(
+                    Math.floor(topLeft.x),
+                    Math.floor(topLeft.y),
+                    Math.ceil(bottomRight.x - topLeft.x) + 1,
+                    Math.ceil(bottomRight.y - topLeft.y) + 1
+                );
+            } else {
+                // Draw the cell
+                ctx.fillStyle = color;
+                ctx.fillRect(
+                    Math.floor(topLeft.x),
+                    Math.floor(topLeft.y),
+                    Math.ceil(bottomRight.x - topLeft.x) + 1,
+                    Math.ceil(bottomRight.y - topLeft.y) + 1
+                );
+            }
+        }
         
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
-          const cellKey = `${gridX},${gridY}`;
-          const cell = paintedCells.get(cellKey);
+            if (!canvasInitialized) initCanvas();
+            
+            const cellKey = `${gridX},${gridY}`;
+            const cell = paintedCells.get(cellKey);
 
-          if (!supabase || !USER_ID) {
-              showNotification('Storage not configured yet');
-              return;
-          }
+            if (!supabase || !USER_ID) {
+                showNotification('Storage not configured yet');
+                return;
+            }
 
           if (color === null) {
               if (!cell) return; // nothing to erase
@@ -1434,9 +1500,7 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
-              
-              // Update display immediately
-              updateSingleCellDisplay(gridX, gridY, null);
+              drawCellToCanvas(gridX, gridY, null);
               
               // RESTORE CHARGE when erasing own paint
               if (USER_ID && USER_CHARGES < USER_CAPACITY) {
@@ -1471,11 +1535,8 @@
               }
               
               // INSTANT local update - IMMEDIATE visual feedback
-              const cellData = { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR };
-              paintedCells.set(cellKey, cellData);
-              
-              // Update display immediately
-              updateSingleCellDisplay(gridX, gridY, color);
+              paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+              drawCellToCanvas(gridX, gridY, color);
               
               // Spend charge locally
               if (USER_ID && spendCharge) {
@@ -1488,56 +1549,31 @@
               paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
               schedulePaintBatch();
           }
+          
+          // Update the map display on next frame for consistency
+          if (!visualUpdateScheduled) {
+              visualUpdateScheduled = true;
+              requestAnimationFrame(() => {
+                  visualUpdateScheduled = false;
+                  updatePaintedCellsDisplay();
+              });
+          }
         }
         
-        // Optimized function to update a single cell's display immediately
-        function updateSingleCellDisplay(gridX, gridY, color) {
-            if (!map.getSource('painted-cells')) return;
-            
-            const cellKey = `${gridX},${gridY}`;
-            const source = map.getSource('painted-cells');
-            const currentData = source._data || { type: 'FeatureCollection', features: [] };
-            
-            // Find the feature index if it exists
-            const featureIndex = currentData.features.findIndex(f => 
-                f.properties && f.properties.x === gridX && f.properties.y === gridY
-            );
-            
-            if (color === null) {
-                // Remove the feature if it exists
-                if (featureIndex !== -1) {
-                    currentData.features.splice(featureIndex, 1);
-                    source.setData(currentData);
-                }
-            } else {
-                const cellFeature = generateHoverCell(gridX, gridY);
-                cellFeature.properties.color = color;
-                
-                if (featureIndex !== -1) {
-                    // Update existing feature
-                    currentData.features[featureIndex] = cellFeature;
-                } else {
-                    // Add new feature
-                    currentData.features.push(cellFeature);
-                }
-                source.setData(currentData);
-            }
-        }
-        
-        // Process visual updates in a single batch (kept for batch operations if needed)
+        // Process visual updates in a single batch
         function processVisualUpdates() {
-            if (pendingVisualUpdates.size === 0) {
-                visualUpdateScheduled = false;
-                return;
-            }
-            
-            // Update all pending cells at once
-            updatePaintedCellsDisplay();
-            updateCellCounter();
-            
-            // Clear pending updates
-            pendingVisualUpdates.clear();
-            visualUpdateScheduled = false;
+              if (pendingVisualUpdates.size === 0) {
+                  visualUpdateScheduled = false;
+                  return;
+              }
+              
+              // Update all pending cells at once
+              updatePaintedCellsDisplay();
+              updateCellCounter();
+              
+              // Clear pending updates
+              pendingVisualUpdates.clear();
+              visualUpdateScheduled = false;
         }
             
             function schedulePaintBatch() {
@@ -2171,19 +2207,45 @@
         }
         
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
+    if (!canvasInitialized) return;
+    
+    // Clear the canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Get current viewport bounds
+    const bounds = map.getBounds();
+    
+    // Draw only visible cells for performance
+    paintedCells.forEach((cell, cellKey) => {
+        const [x, y] = cellKey.split(',').map(Number);
+        
+        // Convert cell bounds to lat/lng
+        const [minLng, minLat] = [
+            (x * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+            (Math.atan(Math.exp((y * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+        ];
+        
+        // Only draw if cell is in viewport
+        if (bounds.contains([minLng, minLat])) {
+            drawCellToCanvas(x, y, cell.color);
         }
+    });
+    
+    // Still update the map source for other functionality
+    if (map.getSource('painted-cells')) {
+        const features = [];
+        paintedCells.forEach((cell, cellKey) => {
+            const [x, y] = cellKey.split(',').map(Number);
+            const cellFeature = generateHoverCell(x, y);
+            cellFeature.properties.color = cell.color;
+            features.push(cellFeature);
+        });
+        map.getSource('painted-cells').setData({
+            type: 'FeatureCollection',
+            features: features
+        });
+    }
+}
         
         function updateCellCounter() {
             // No number needed, just keep the button text as 'Paint'
@@ -2321,8 +2383,23 @@
         }
 
         // Initialize grid when map loads
+        // Update canvas on map move/zoom
+        map.on('move', () => {
+            if (canvasInitialized) {
+                updatePaintedCellsDisplay();
+            }
+        });
+        
+        map.on('zoom', () => {
+            if (canvasInitialized) {
+                updatePaintedCellsDisplay();
+            }
+        });
+        
         map.on('load', () => {
             console.log('Map loaded successfully');
+            // Initialize canvas after map is loaded
+            initCanvas();
             
             // Add grid lines source and layer
             map.addSource('grid-lines', {
