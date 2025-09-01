@@ -1421,14 +1421,28 @@
         // Initialize canvas overlay
         function initCanvas() {
             if (canvasInitialized) return;
+            
+            console.log('Initializing canvas overlay...');
+            
+            // Set canvas size
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            
+            // Style canvas
             canvas.style.position = 'fixed';
             canvas.style.top = '0';
             canvas.style.left = '0';
             canvas.style.pointerEvents = 'none';
             canvas.style.zIndex = '1000';
+            
+            // Add to DOM
             document.body.appendChild(canvas);
+            
+            // Set a background color for debugging (transparent)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            console.log('Canvas overlay initialized');
             canvasInitialized = true;
         }
         
@@ -1450,7 +1464,10 @@
         
         // Draw a cell to the canvas immediately
         function drawCellToCanvas(gridX, gridY, color) {
-            if (!canvasInitialized) initCanvas();
+            if (!canvasInitialized) {
+                console.log('Canvas not initialized, initializing...');
+                initCanvas();
+            }
             
             const [minLng, minLat] = [
                 (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
@@ -1486,13 +1503,20 @@
         
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
-            if (!canvasInitialized) initCanvas();
+            console.log(`paintCell called: ${gridX},${gridY}, color: ${color}`);
+            
+            if (!canvasInitialized) {
+                console.log('Canvas not initialized, initializing...');
+                initCanvas();
+            }
             
             const cellKey = `${gridX},${gridY}`;
             const cell = paintedCells.get(cellKey);
 
             if (!supabase || !USER_ID) {
-                showNotification('Storage not configured yet');
+                const msg = 'Storage not configured yet';
+                console.error(msg);
+                showNotification(msg);
                 return;
             }
 
@@ -1540,8 +1564,22 @@
               }
               
               // INSTANT local update - IMMEDIATE visual feedback
-              paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-              drawCellToCanvas(gridX, gridY, color);
+            console.log(`Setting cell ${cellKey} to color ${color}`);
+            paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
+            
+            // Force immediate canvas update
+            const bounds = map.getBounds();
+            const [minLng, minLat] = [
+                (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+            ];
+            
+            if (bounds.contains([minLng, minLat])) {
+                console.log(`Cell ${cellKey} is in viewport, drawing immediately`);
+                drawCellToCanvas(gridX, gridY, color);
+            } else {
+                console.log(`Cell ${cellKey} is not in viewport, skipping immediate draw`);
+            }
               
               // Spend charge locally
               if (USER_ID && spendCharge) {
@@ -2217,10 +2255,16 @@
         }
 
         function updatePaintedCellsDisplay() {
-            if (!canvasInitialized) return;
+            if (!canvasInitialized) {
+                console.log('Canvas not initialized, skipping update');
+                return;
+            }
             
-            // Clear the canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            console.log('Updating painted cells display');
+            
+            // Clear the canvas with a semi-transparent background for debugging
+            ctx.fillStyle = 'rgba(0, 0, 0, 0)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             // Check if we should show painted cells (4000x4000 or fewer cells visible)
             if (!shouldShowPaintedCells()) {
@@ -2434,6 +2478,22 @@
             console.log('Map loaded successfully');
             // Initialize canvas after map is loaded
             initCanvas();
+            
+            // Force initial render of painted cells
+            setTimeout(() => {
+                updatePaintedCellsDisplay();
+                // Make sure canvas is on top of the map
+                const mapContainer = map.getContainer();
+                const canvas = document.querySelector('canvas.maplibregl-canvas');
+                if (canvas && canvas.nextSibling) {
+                    canvas.nextSibling.style.zIndex = 1; // Map canvas
+                }
+                // Make sure our overlay canvas is on top
+                const overlayCanvas = document.querySelector('canvas:not(.maplibregl-canvas)');
+                if (overlayCanvas) {
+                    overlayCanvas.style.zIndex = 2;
+                }
+            }, 100);
             
             // Add grid lines source and layer
             map.addSource('grid-lines', {
