@@ -1443,39 +1443,48 @@
         let pendingVisualUpdates = new Set();
         let visualUpdateScheduled = false;
         
-        // Draw a cell to the canvas immediately
+        // Cache for cell projections to avoid redundant calculations
+        const cellProjectionCache = new Map();
+        
+        // Draw a cell to the canvas immediately with optimized projection caching
         function drawCellToCanvas(gridX, gridY, color) {
             if (!canvasInitialized) initCanvas();
             
-            const [minLng, minLat] = [
-                (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
-                (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
-            ];
-            const [maxLng, maxLat] = [
-                ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
-                (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
-            ];
+            // Use cached projection if available
+            const cellKey = `${gridX},${gridY}`;
+            let projection = cellProjectionCache.get(cellKey);
             
-            const topLeft = map.project([minLng, maxLat]);
-            const bottomRight = map.project([maxLng, minLat]);
+            if (!projection) {
+                // Calculate and cache the projection
+                const [minLng, minLat] = [
+                    (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                    (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                ];
+                const [maxLng, maxLat] = [
+                    ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                    (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+                ];
+                
+                const topLeft = map.project([minLng, maxLat]);
+                const bottomRight = map.project([maxLng, minLat]);
+                
+                projection = {
+                    x: Math.floor(topLeft.x),
+                    y: Math.floor(topLeft.y),
+                    width: Math.ceil(bottomRight.x - topLeft.x) + 1,
+                    height: Math.ceil(bottomRight.y - topLeft.y) + 1
+                };
+                
+                // Cache the projection
+                cellProjectionCache.set(cellKey, projection);
+            }
             
+            // Draw using cached projection
             if (color === null) {
-                // Clear the cell
-                ctx.clearRect(
-                    Math.floor(topLeft.x),
-                    Math.floor(topLeft.y),
-                    Math.ceil(bottomRight.x - topLeft.x) + 1,
-                    Math.ceil(bottomRight.y - topLeft.y) + 1
-                );
+                ctx.clearRect(projection.x, projection.y, projection.width, projection.height);
             } else {
-                // Draw the cell
                 ctx.fillStyle = color;
-                ctx.fillRect(
-                    Math.floor(topLeft.x),
-                    Math.floor(topLeft.y),
-                    Math.ceil(bottomRight.x - topLeft.x) + 1,
-                    Math.ceil(bottomRight.y - topLeft.y) + 1
-                );
+                ctx.fillRect(projection.x, projection.y, projection.width, projection.height);
             }
         }
         
@@ -1560,127 +1569,113 @@
           }
         }
         
-        // Process visual updates in a single batch
+        // Process visual updates in a single batch with optimized batching
         function processVisualUpdates() {
-              if (pendingVisualUpdates.size === 0) {
-                  visualUpdateScheduled = false;
-                  return;
-              }
-              
-              // Update all pending cells at once
-              updatePaintedCellsDisplay();
-              updateCellCounter();
-              
-              // Clear pending updates
-              pendingVisualUpdates.clear();
-              visualUpdateScheduled = false;
+            if (pendingVisualUpdates.size === 0) return;
+            
+            // Create a copy of pending updates and clear immediately to allow new updates
+            const updates = Array.from(pendingVisualUpdates);
+            pendingVisualUpdates.clear();
+            
+            // Batch cell updates by color to reduce state changes
+            const cellsByColor = new Map();
+            
+            // Group cells by color for batch drawing
+            for (const cellKey of updates) {
+                const cell = paintedCells.get(cellKey);
+                const color = cell ? cell.color : null;
+                if (!cellsByColor.has(color)) {
+                    cellsByColor.set(color, []);
+                }
+                cellsByColor.get(color).push(cellKey);
+            }
+            
+            // Process each color batch
+            cellsByColor.forEach((cellKeys, color) => {
+                if (color === null) {
+                    // Clear cells
+                    cellKeys.forEach(cellKey => {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        drawCellToCanvas(x, y, null);
+                    });
+                } else {
+                    // Draw cells with this color
+                    ctx.fillStyle = color;
+                    cellKeys.forEach(cellKey => {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        drawCellToCanvas(x, y, color);
+                    });
+                }
+            });
+            
+            // Schedule a single map update on the next frame
+            if (!visualUpdateScheduled) {
+                visualUpdateScheduled = true;
+                requestAnimationFrame(() => {
+                    visualUpdateScheduled = false;
+                    updatePaintedCellsDisplay();
+                });
+            }
         }
             
-            // Track the last processed batch ID to avoid race conditions
-            let lastBatchId = 0;
-            let isProcessingBatch = false;
+        // Schedule paint batch for database writes with smart batching
+        function schedulePaintBatch() {
+            if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
             
-            function schedulePaintBatch() {
-              if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
-              
-              // If queue is getting large, process immediately
-              if (paintQueue.size >= 20) {
+            // Process immediately if queue is large enough
+            if (paintQueue.size >= 10) {
                 processPaintBatch();
-              } else {
+            } else {
+                // Otherwise use the normal delay
                 paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
-              }
             }
-            
-            async function processPaintBatch() {
-              if (paintQueue.size === 0 || isProcessingBatch) return;
-              isProcessingBatch = true;
+        }
+        
+        // Process batched paint operations
+        async function processPaintBatch() {
+              if (paintQueue.size === 0) return;
               
-              try {
-                const currentBatchId = ++lastBatchId;
-                const batch = Array.from(paintQueue.values());
-                
-                // Only keep the most recent update for each cell
-                const latestUpdates = new Map();
-                batch.forEach(update => {
-                  const key = `${update.gridX},${update.gridY}`;
-                  latestUpdates.set(key, update);
-                });
-                
-                // Clear the queue and add back any new updates that came in
-                paintQueue.clear();
-                
-                const updatesToProcess = Array.from(latestUpdates.values());
-                
-                // Process deletes
-                const deletes = updatesToProcess.filter(p => p.color === null);
-                if (deletes.length > 0) {
-                  // Use a transaction for all deletes
-                  const { error } = await supabase.rpc('batch_delete_cells', {
-                    cells_to_delete: deletes.map(d => ({ x: d.gridX, y: d.gridY }))
-                  });
-                  
-                  if (error) throw error;
-                  
-                  // Update charges for deletions that restore charges
-                  const chargeRestores = deletes.filter(p => p.restoreCharge).length;
-                  if (chargeRestores > 0) {
-                    await supabase.rpc('increment_charges', {
-                      user_id: USER_ID,
-                      amount: chargeRestores,
-                      capacity: USER_CAPACITY
-                    });
-                  }
+              const batch = Array.from(paintQueue.values());
+              paintQueue.clear();
+              
+              // Process deletes
+              const deletes = batch.filter(p => p.color === null);
+              if (deletes.length > 0) {
+                for (const del of deletes) {
+                  await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
                 }
                 
-                // Process inserts/updates
-                const inserts = updatesToProcess.filter(p => p.color !== null);
-                if (inserts.length > 0) {
-                  const { error } = await supabase.from('paints').upsert(
-                    inserts.map(ins => ({
-                      x: ins.gridX,
-                      y: ins.gridY,
-                      color: ins.color,
-                      owner: USER_ID,
-                      owner_name: USER_NAME,
-                      owner_avatar: USER_AVATAR
-                    })),
-                    { onConflict: 'x,y' }
-                  );
-                  
-                  if (error) throw error;
-                  
-                  // Update charges for inserts that spend charges
-                  const chargeSpends = inserts.filter(p => p.spendCharge !== false).length;
-                  if (chargeSpends > 0) {
-                    await supabase.rpc('decrement_charges', {
-                      user_id: USER_ID,
-                      amount: chargeSpends,
-                      capacity: USER_CAPACITY
-                    });
-                  }
+                // Update charges for deletions that restore charges
+                const chargeRestores = deletes.filter(p => p.restoreCharge).length;
+                if (chargeRestores > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
                 }
+              }
+              
+              // Process paints
+              const paints = batch.filter(p => p.color !== null);
+              if (paints.length > 0) {
+                const upserts = paints.map(p => ({
+                  x: p.gridX, y: p.gridY, color: p.color,
+                  owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
+                }));
+                await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
                 
-                // If this is still the most recent batch, we're done
-                if (currentBatchId === lastBatchId) {
-                  // Update local state to match server state
-                  initialLoad();
-                }
-                
-              } catch (error) {
-                console.error('Error processing paint batch:', error);
-                // On error, reload all data to ensure consistency
-                initialLoad();
-              } finally {
-                isProcessingBatch = false;
-                
-                // Process any new updates that came in while we were working
-                if (paintQueue.size > 0) {
-                  schedulePaintBatch();
+                // Update charges in batch
+                const chargeSpends = paints.filter(p => p.spendCharge).length;
+                if (chargeSpends > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
                 }
               }
             }
-
-            // Initialize the map
             const map = new maplibregl.Map({
                 container: 'map',
                 style: 'https://api.maptiler.com/maps/0198b6c2-2bd8-73e7-8d52-98bec753acb5/style.json?key=cnLd5cDF8MjR4DD1YOHi',
@@ -2439,21 +2434,28 @@
         }
 
         // Initialize grid when map loads
-        // Update canvas on map move/zoom
-        map.on('move', () => {
-            if (canvasInitialized) {
-                updatePaintedCellsDisplay();
-            }
-        });
+        // Debounce map move/zoom events for better performance
+        let moveEndTimeout;
+        const handleMapMove = () => {
+            if (moveEndTimeout) clearTimeout(moveEndTimeout);
+            moveEndTimeout = setTimeout(() => {
+                if (canvasInitialized) {
+                    // Clear projection cache on move/zoom as positions change
+                    cellProjectionCache.clear();
+                    updatePaintedCellsDisplay();
+                }
+            }, 50); // 50ms debounce
+        };
         
+        // Update canvas on map move/zoom with debouncing
+        map.on('move', handleMapMove);
         map.on('zoom', () => {
-            if (canvasInitialized) {
-                updatePaintedCellsDisplay();
-            }
+            updateGridVisibility();
+            updateGrid();
+            updatePaintedCellsVisibility();
+            handleMapMove(); // Use the same debounced handler
         });
-        
-        map.on('load', () => {
-            console.log('Map loaded successfully');
+        console.log('Map loaded successfully');
             // Initialize canvas after map is loaded
             initCanvas();
             
