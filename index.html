@@ -1443,42 +1443,38 @@
         let pendingVisualUpdates = new Set();
         let visualUpdateScheduled = false;
         
-        // Draw a cell to the canvas immediately with consistent sizing
+        // Draw a cell to the canvas immediately
         function drawCellToCanvas(gridX, gridY, color) {
             if (!canvasInitialized) initCanvas();
             
-            // Get the center point of the cell in geographic coordinates
-            const centerLng = (gridX * CELL_SIZE_METERS + CELL_SIZE_METERS/2 - 20037508.34) * 180 / 20037508.34;
-            const centerLat = (Math.atan(Math.exp((gridY * CELL_SIZE_METERS + CELL_SIZE_METERS/2 - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90;
+            const [minLng, minLat] = [
+                (gridX * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                (Math.atan(Math.exp((gridY * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+            ];
+            const [maxLng, maxLat] = [
+                ((gridX + 1) * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+                (Math.atan(Math.exp(((gridY + 1) * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+            ];
             
-            // Get the pixel size of one meter at the current zoom level
-            const metersPerPixel = 40075016.686 / (256 * Math.pow(2, map.getZoom()));
-            const cellSizePixels = CELL_SIZE_METERS / metersPerPixel;
-            
-            // Calculate the pixel position of the cell center
-            const centerPixel = map.project([centerLng, centerLat]);
-            
-            // Calculate the top-left corner of the cell in pixels
-            const x = Math.floor(centerPixel.x - cellSizePixels / 2);
-            const y = Math.floor(centerPixel.y - cellSizePixels / 2);
-            const size = Math.ceil(cellSizePixels);
+            const topLeft = map.project([minLng, maxLat]);
+            const bottomRight = map.project([maxLng, minLat]);
             
             if (color === null) {
                 // Clear the cell
                 ctx.clearRect(
-                    x,
-                    y,
-                    size,
-                    size
+                    Math.floor(topLeft.x),
+                    Math.floor(topLeft.y),
+                    Math.ceil(bottomRight.x - topLeft.x) + 1,
+                    Math.ceil(bottomRight.y - topLeft.y) + 1
                 );
             } else {
-                // Draw the cell with consistent sizing
+                // Draw the cell
                 ctx.fillStyle = color;
                 ctx.fillRect(
-                    x,
-                    y,
-                    size,
-                    size
+                    Math.floor(topLeft.x),
+                    Math.floor(topLeft.y),
+                    Math.ceil(bottomRight.x - topLeft.x) + 1,
+                    Math.ceil(bottomRight.y - topLeft.y) + 1
                 );
             }
         }
@@ -2211,57 +2207,36 @@
         }
         
         function updatePaintedCellsDisplay() {
-            if (!canvasInitialized || !map) return;
-            
-            // Clear the canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Get current viewport bounds
-            const bounds = map.getBounds();
-            
-            // Get the current zoom level
-            const zoom = map.getZoom();
-            
-            // Only render cells if zoomed in enough
-            if (zoom < 5) {
-                // If too zoomed out, don't render individual cells
-                return;
-            }
-            
-            // Get the visible grid bounds
-            const ne = bounds.getNorthEast();
-            const sw = bounds.getSouthWest();
-            
-            // Convert bounds to grid coordinates with some padding
-            const padding = 5; // Add some padding to prevent edge artifacts
-            const minX = Math.max(0, Math.floor((20037508.34 + (sw.lng * 20037508.34 / 180)) / CELL_SIZE_METERS) - padding);
-            const maxX = Math.min(4000, Math.ceil((20037508.34 + (ne.lng * 20037508.34 / 180)) / CELL_SIZE_METERS) + padding);
-            
-            // Convert latitude to Web Mercator Y
-            const latToY = (lat) => {
-                return Math.floor((20037508.34 - (Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180)) * 20037508.34 / 180) / CELL_SIZE_METERS);
-            };
-            
-            const minY = Math.max(0, latToY(sw.lat) - padding);
-            const maxY = Math.min(4000, latToY(ne.lat) + padding);
-            
-            // Draw cells in the visible area
-            for (let x = minX; x <= maxX; x++) {
-                for (let y = minY; y <= maxY; y++) {
-                    const cellKey = `${x},${y}`;
-                    const cell = paintedCells.get(cellKey);
-                    if (cell) {
-                        drawCellToCanvas(x, y, cell.color);
-                    }
-                }
-            }
-            
-            // Still update the map source for other functionality
-            if (map.getSource('painted-cells')) {
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
+    if (!canvasInitialized) return;
+    
+    // Clear the canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Get current viewport bounds
+    const bounds = map.getBounds();
+    
+    // Draw only visible cells for performance
+    paintedCells.forEach((cell, cellKey) => {
+        const [x, y] = cellKey.split(',').map(Number);
+        
+        // Convert cell bounds to lat/lng
+        const [minLng, minLat] = [
+            (x * CELL_SIZE_METERS - 20037508.34) * 180 / 20037508.34,
+            (Math.atan(Math.exp((y * CELL_SIZE_METERS - 20037508.34) * Math.PI / 20037508.34)) * 360 / Math.PI) - 90
+        ];
+        
+        // Only draw if cell is in viewport
+        if (bounds.contains([minLng, minLat])) {
+            drawCellToCanvas(x, y, cell.color);
+        }
+    });
+    
+    // Still update the map source for other functionality
+    if (map.getSource('painted-cells')) {
+        const features = [];
+        paintedCells.forEach((cell, cellKey) => {
+            const [x, y] = cellKey.split(',').map(Number);
+            const cellFeature = generateHoverCell(x, y);
             cellFeature.properties.color = cell.color;
             features.push(cellFeature);
         });
