@@ -1411,8 +1411,9 @@
                     // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
         let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
         let paintBatchTimeout = null;
-        const PAINT_BATCH_DELAY = 50; // ms - For DB batching only
-        let visualUpdateRequestId = null; // For tracking animation frames
+        const PAINT_BATCH_DELAY = 50; // ms - Increased for better batching
+        let pendingVisualUpdates = new Set(); // Track cells that need visual updates
+        let visualUpdateScheduled = false;
         
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
@@ -1433,8 +1434,7 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
-              // Immediate visual update
-              updatePaintedCellsDisplay();
+              pendingVisualUpdates.add(cellKey);
               
               // RESTORE CHARGE when erasing own paint
               if (USER_ID && USER_CHARGES < USER_CAPACITY) {
@@ -1470,8 +1470,7 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-              // Immediate visual update
-              updatePaintedCellsDisplay();
+              pendingVisualUpdates.add(cellKey);
               
               // Spend charge locally
               if (USER_ID && spendCharge) {
@@ -1485,54 +1484,27 @@
               schedulePaintBatch();
           }
           
-          // Process DB updates in background
-          schedulePaintBatch();
+          // Schedule visual update if not already scheduled
+          if (!visualUpdateScheduled) {
+              visualUpdateScheduled = true;
+              requestAnimationFrame(processVisualUpdates);
+          }
         }
         
-        // Optimized updatePaintedCellsDisplay for immediate visual feedback
-        function updatePaintedCellsDisplay() {
-            if (!map.getSource('painted-cells')) return;
-            
-            // Cancel any pending visual updates to prevent frame drops
-            if (visualUpdateRequestId) {
-                cancelAnimationFrame(visualUpdateRequestId);
-            }
-            
-            // Schedule the update for the next frame
-            visualUpdateRequestId = requestAnimationFrame(() => {
-                const features = [];
-                const batchSize = 10000; // Process in batches to prevent UI freezing
-                let processed = 0;
-                
-                for (const [key, cell] of paintedCells) {
-                    features.push({
-                        type: 'Feature',
-                        properties: { color: cell.color },
-                        geometry: {
-                            type: 'Point',
-                            coordinates: gridToGeo(parseInt(key.split(',')[0]), parseInt(key.split(',')[1]))
-                        }
-                    });
-                    
-                    // Process in chunks to keep the UI responsive
-                    if (++processed % batchSize === 0) {
-                        map.getSource('painted-cells').setData({
-                            type: 'FeatureCollection',
-                            features: features.slice(-batchSize)
-                        });
-                    }
-                }
-                
-                // Update with all features
-                if (features.length > 0) {
-                    map.getSource('painted-cells').setData({
-                        type: 'FeatureCollection',
-                        features
-                    });
-                }
-                
-                visualUpdateRequestId = null;
-            });
+        // Process visual updates in a single batch
+        function processVisualUpdates() {
+              if (pendingVisualUpdates.size === 0) {
+                  visualUpdateScheduled = false;
+                  return;
+              }
+              
+              // Update all pending cells at once
+              updatePaintedCellsDisplay();
+              updateCellCounter();
+              
+              // Clear pending updates
+              pendingVisualUpdates.clear();
+              visualUpdateScheduled = false;
         }
             
             function schedulePaintBatch() {
@@ -1713,9 +1685,11 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // Queue visual updates for next animation frame
                         if (hasNewPaints) {
-                            updatePaintedCellsDisplay();
+                            for (const cell of interpolatedCells) {
+                                pendingCells.add(`${cell.x},${cell.y}`);
+                            }
                             updateCellCounter();
                             schedulePaintBatch();
                         }
@@ -1767,9 +1741,11 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // Queue visual updates for next animation frame
                         if (hasNewErases) {
-                            updatePaintedCellsDisplay();
+                            for (const cell of interpolatedCells) {
+                                pendingCells.add(`${cell.x},${cell.y}`);
+                            }
                             updateCellCounter();
                             updateChargesDisplay();
                             schedulePaintBatch();
@@ -1928,21 +1904,42 @@
             return cells;
         }
 
-        // Add direct DOM mousemove listener IMMEDIATELY - no waiting for map load
-        setTimeout(() => {
-            const mapCanvas = map.getCanvasContainer();
-            mapCanvas.addEventListener('mousemove', (e) => {
-                // Convert DOM mouse coordinates to MapLibre point format
-                const rect = mapCanvas.getBoundingClientRect();
-                lastMouseX = e.clientX - rect.left;
-                lastMouseY = e.clientY - rect.top;
-                
-                // Immediate update without waiting for requestAnimationFrame
+        // Optimized mousemove handler with requestAnimationFrame
+        const mapCanvas = map.getCanvasContainer();
+        const handleMouseMove = (e) => {
+            // Convert DOM mouse coordinates to MapLibre point format
+            const rect = mapCanvas.getBoundingClientRect();
+            lastMouseX = e.clientX - rect.left;
+            lastMouseY = e.clientY - rect.top;
+            
+            const now = performance.now();
+            // Throttle to ~60fps
+            if (now - lastFrameTime < 16) {
+                return;
+            }
+            lastFrameTime = now;
+            
+            // Use requestAnimationFrame for smooth visual updates
+            if (!isRendering) {
+                isRendering = true;
+                requestAnimationFrame(() => {
+                    updateHighlight();
+                    isRendering = false;
+                    
+                    // Process any pending cell updates
+                    if (pendingCells.size > 0) {
+                        updatePaintedCellsDisplay(Array.from(pendingCells));
+                        pendingCells.clear();
+                    }
+                });
+            } else {
+                // If we're already rendering, just update the highlight for smoother tracking
                 updateHighlight();
-            });
-            // Ensure overlay exists
-            createHoverOverlay();
-        }, 0);
+            }
+        };
+        
+        // Add the optimized mousemove listener
+        mapCanvas.addEventListener('mousemove', handleMouseMove, { passive: true });
         
         // Color palette (expanded for equal rows)
         const colorPalette = [
@@ -2165,36 +2162,95 @@
                 return cell ? cell.color : null;
         }
         
-        function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
-        }
-        
-        function updateCellCounter() {
-            // No number needed, just keep the button text as 'Paint'
-        }
-        
-        function showNotification(message) {
-            // Notifications disabled: no-op
-            return;
-        }
-        
-        function checkPaintingEnabled() {
+        function updatePaintedCellsDisplay(cellKeys = null) {
+            if (!map.getSource('painted-cells')) return;
+            
+            const source = map.getSource('painted-cells');
+            const currentData = source.serialize() || { type: 'FeatureCollection', features: [] };
+            
+            // Get visible bounds with padding for pre-loading
             const visibleCells = getVisibleGridCells();
-            isPaintingEnabled = visibleCells.x <= PAINTING_THRESHOLD && visibleCells.y <= PAINTING_THRESHOLD;
-            return isPaintingEnabled;
+            const padding = 10; // Number of cells to pre-load around the viewport
+            
+            const minX = Math.floor(visibleCells.minX) - padding;
+            const maxX = Math.ceil(visibleCells.maxX) + padding;
+            const minY = Math.floor(visibleCells.minY) - padding;
+            const maxY = Math.ceil(visibleCells.maxY) + padding;
+            
+            // Create a map of existing features for faster lookups
+            const featureMap = new Map();
+            currentData.features.forEach((feature, index) => {
+                const [x, y] = feature.geometry.coordinates[0][0];
+                featureMap.set(`${x},${y}`, { feature, index });
+            });
+            
+            // Process updates
+            let features = [...currentData.features];
+            
+            // If specific cells are provided, only update those
+            if (cellKeys && cellKeys.length > 0) {
+                cellKeys.forEach(cellKey => {
+                    const [x, y] = cellKey.split(',').map(Number);
+                    const cell = paintedCells.get(cellKey);
+                    
+                    // Skip cells outside viewport + padding
+                    if (x < minX || x > maxX || y < minY || y > maxY) {
+                        return;
+                    }
+                    
+                    const existing = featureMap.get(cellKey);
+                    
+                    if (cell) {
+                        // Add or update cell
+                        const newFeature = createCellFeature(x, y, cell.color);
+                        if (existing) {
+                            features[existing.index] = newFeature;
+                        } else {
+                            features.push(newFeature);
+                        }
+                    } else {
+                        // Remove cell if it exists
+                        if (existing) {
+                            features.splice(existing.index, 1);
+                        }
+                    }
+                });
+            } else {
+                // Full update - only include cells in or near viewport
+                features = [];
+                paintedCells.forEach((cell, key) => {
+                    const [x, y] = key.split(',').map(Number);
+                    if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                        features.push(createCellFeature(x, y, cell.color));
+                    }
+                });
+            }
+            
+            // Update the source data in a single operation
+            source.setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+            
+            // Helper function to create a cell feature
+            function createCellFeature(x, y, color) {
+                return {
+                    type: 'Feature',
+                    properties: { color },
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [[
+                            [x, y],
+                            [x + 1, y],
+                            [x + 1, y + 1],
+                            [x, y + 1],
+                            [x, y]
+                        ]]
+                    }
+                };
+            }
         }
-
+        
         // Check if the color palette is currently visible
         function isPaletteVisible() {
             const paletteEl = document.getElementById('colorPalette');
@@ -2229,8 +2285,10 @@
         // Performance optimization variables
         let mouseMoveTimeout = null;
         let isMapMoving = false;
-        
-        // OLD MOUSE HANDLER REMOVED - Using instant highlighting system instead
+        let lastFrameTime = 0;
+        let isRendering = false;
+        let pendingCells = new Set();
+        // lastMouseX and lastMouseY are already declared earlier in the code
 
         // Handle mouse leave
         function handleMouseLeave() {
