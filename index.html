@@ -1260,15 +1260,70 @@
 
             async function initialLoad() {
               if (!supabase) return;
-              const { data, error } = await supabase
-                .from('paints')
-                .select('*')
-                .order('updated_at', { ascending: true });
-              if (error) { console.error('Initial load error', error); return; }
-              paintedCells.clear();
-              for (const row of data) mergeRow(row);
-              updatePaintedCellsDisplay();
-              updateCellCounter();
+              
+              // Show loading state
+              const loadingIndicator = document.createElement('div');
+              loadingIndicator.textContent = 'Loading paints...';
+              loadingIndicator.style.position = 'fixed';
+              loadingIndicator.style.top = '20px';
+              loadingIndicator.style.left = '50%';
+              loadingIndicator.style.transform = 'translateX(-50%)';
+              loadingIndicator.style.background = 'rgba(0,0,0,0.8)';
+              loadingIndicator.style.color = 'white';
+              loadingIndicator.style.padding = '10px 20px';
+              loadingIndicator.style.borderRadius = '20px';
+              loadingIndicator.style.zIndex = '2000';
+              document.body.appendChild(loadingIndicator);
+              
+              try {
+                // Load all paints at once without ordering to speed up the query
+                const { data, error } = await supabase
+                  .from('paints')
+                  .select('*');
+                  
+                if (error) throw error;
+                
+                // Clear existing cells
+                paintedCells.clear();
+                
+                // Batch process all cells
+                if (data && data.length > 0) {
+                  // First, update the data structure
+                  for (const row of data) {
+                    const key = `${row.x},${row.y}`;
+                    if (row.color === null) {
+                      paintedCells.delete(key);
+                    } else {
+                      paintedCells.set(key, { 
+                        color: row.color, 
+                        owner: row.owner, 
+                        owner_name: row.owner_name || null, 
+                        owner_avatar: row.owner_avatar || null 
+                      });
+                    }
+                  }
+                  
+                  // Then render everything at once
+                  updatePaintedCellsDisplay();
+                  updateCellCounter();
+                }
+                
+                // Update last seen timestamp for polling
+                if (data && data.length > 0) {
+                  lastSeen = data.reduce((latest, row) => 
+                    new Date(row.updated_at) > new Date(latest) ? row.updated_at : latest, 
+                    new Date(0).toISOString()
+                  );
+                }
+                
+              } catch (error) {
+                console.error('Initial load error', error);
+              } finally {
+                // Remove loading indicator
+                if (loadingIndicator.parentNode) {
+                  loadingIndicator.parentNode.removeChild(loadingIndicator);
+                }
+              }
             }
 
             let lastSeen = new Date(0).toISOString();
