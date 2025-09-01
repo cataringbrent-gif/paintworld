@@ -68,17 +68,6 @@
             cursor: default !important; /* force arrow on map container */
         }
         
-        #paintOverlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            pointer-events: none;
-            z-index: 1000;
-            opacity: 0.9; /* Slightly transparent for better visual feedback */
-        }
-        
         
 
         /* Search bar styles */
@@ -878,9 +867,6 @@
 
     <div id="map" class="maplibregl-map"><div class="maplibregl-canvas-container maplibregl-interactive maplibregl-touch-drag-pan maplibregl-touch-zoom-rotate"><canvas class="maplibregl-canvas" tabindex="0" aria-label="Map" role="region" width="1912" height="954" style="width: 1912px; height: 954px;"></canvas></div><div class="maplibregl-control-container"><div class="maplibregl-ctrl-top-left "></div><div class="maplibregl-ctrl-top-right "></div><div class="maplibregl-ctrl-bottom-left "></div><div class="maplibregl-ctrl-bottom-right "><details class="maplibregl-ctrl maplibregl-ctrl-attrib" open=""><summary class="maplibregl-ctrl-attrib-button" title="Toggle attribution" aria-label="Toggle attribution"></summary><div class="maplibregl-ctrl-attrib-inner"><a href="https://www.maptiler.com/copyright/" target="_blank"> MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank"> OpenStreetMap contributors</a></div></details></div></div></div>
     
-    <!-- Paint overlay canvas for instant visual feedback -->
-    <canvas id="paintOverlay" style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1000;"></canvas>
-    
     <!-- Search bar -->
     <div class="search-container">
         <input type="text" class="search-box" placeholder="Search for a place..." id="searchInput">
@@ -1426,8 +1412,6 @@
         let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
         let paintBatchTimeout = null;
         const PAINT_BATCH_DELAY = 50; // ms - Increased for better batching
-        let pendingVisualUpdates = new Set(); // Track cells that need visual updates
-        let visualUpdateScheduled = false;
         
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
@@ -1449,9 +1433,6 @@
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
               pendingVisualUpdates.add(cellKey);
-              
-              // Remove from overlay for super responsive visual feedback
-              removeFromOverlay(gridX, gridY);
               
               // RESTORE CHARGE when erasing own paint
               if (USER_ID && USER_CHARGES < USER_CAPACITY) {
@@ -1487,10 +1468,10 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-              pendingVisualUpdates.add(cellKey);
               
-              // Add to overlay for super responsive visual feedback
-              addToOverlay(gridX, gridY, color);
+              // IMMEDIATE visual update - no batching delay like highlighting
+              updatePaintedCellsDisplay();
+              updateCellCounter();
               
               // Spend charge locally
               if (USER_ID && spendCharge) {
@@ -1503,34 +1484,6 @@
               paintQueue.set(cellKey, { gridX, gridY, color, spendCharge, timestamp: Date.now() });
               schedulePaintBatch();
           }
-          
-          // Schedule visual update if not already scheduled
-          if (!visualUpdateScheduled) {
-              visualUpdateScheduled = true;
-              requestAnimationFrame(processVisualUpdates);
-          }
-        }
-        
-        // Process visual updates in a single batch
-        function processVisualUpdates() {
-              if (pendingVisualUpdates.size === 0) {
-                  visualUpdateScheduled = false;
-                  return;
-              }
-              
-              // Clear overlay cells that are being rendered to main canvas
-              pendingVisualUpdates.forEach(cellKey => {
-                  const [x, y] = cellKey.split(',').map(Number);
-                  removeFromOverlay(x, y);
-              });
-              
-              // Update all pending cells at once
-              updatePaintedCellsDisplay();
-              updateCellCounter();
-              
-              // Clear pending updates
-              pendingVisualUpdates.clear();
-              visualUpdateScheduled = false;
         }
             
             function schedulePaintBatch() {
@@ -1699,9 +1652,6 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // Add to overlay for super responsive visual feedback
-                                addToOverlay(cell.x, cell.y, selectedColor);
-                                
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
                                     gridX: cell.x, 
@@ -1714,7 +1664,7 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // IMMEDIATE visual update for all cells - no batching delay
                         if (hasNewPaints) {
                             updatePaintedCellsDisplay();
                             updateCellCounter();
@@ -1748,9 +1698,6 @@
                                 // INSTANT local update
                                 paintedCells.delete(cellKey);
                                 
-                                // Remove from overlay for super responsive visual feedback
-                                removeFromOverlay(cell.x, cell.y);
-                                
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
                                     USER_CHARGES = Math.min(USER_CAPACITY, USER_CHARGES + 1);
@@ -1771,7 +1718,7 @@
                             }
                         }
                         
-                        // Single visual update for all cells
+                        // IMMEDIATE visual update for all cells - no batching delay
                         if (hasNewErases) {
                             updatePaintedCellsDisplay();
                             updateCellCounter();
@@ -2402,9 +2349,6 @@
             updatePaintedCellsVisibility();
             // Update zoom hint visibility on load
             updateZoomHintVisibility();
-            
-            // Initialize paint overlay canvas
-            initializePaintOverlay();
         });
 
         // Toggle painted layer visibility depending on visible grid cells
@@ -2427,112 +2371,6 @@
             const tooMany = vc.x > 4000 || vc.y > 4000;
             el.style.display = tooMany ? 'block' : 'none';
         }
-        
-        // Paint overlay system for instant visual feedback
-        let paintOverlayCanvas = null;
-        let paintOverlayCtx = null;
-        let overlayPaintedCells = new Map(); // cellKey -> {color, timestamp}
-        
-        function initializePaintOverlay() {
-            paintOverlayCanvas = document.getElementById('paintOverlay');
-            if (!paintOverlayCanvas) return;
-            
-            paintOverlayCtx = paintOverlayCanvas.getContext('2d');
-            
-            // Set canvas size to match viewport
-            resizePaintOverlay();
-            
-            // Resize overlay when window resizes
-            window.addEventListener('resize', resizePaintOverlay);
-            map.on('resize', resizePaintOverlay);
-        }
-        
-        function resizePaintOverlay() {
-            if (!paintOverlayCanvas) return;
-            paintOverlayCanvas.width = window.innerWidth;
-            paintOverlayCanvas.height = window.innerHeight;
-        }
-        
-        function addToOverlay(gridX, gridY, color) {
-            if (!paintOverlayCanvas || !paintOverlayCtx) return;
-            
-            const cellKey = `${gridX},${gridY}`;
-            overlayPaintedCells.set(cellKey, { 
-                color, 
-                timestamp: Date.now(),
-                gridX,
-                gridY
-            });
-            
-            // Draw the cell on the overlay
-            drawOverlayCell(gridX, gridY, color);
-        }
-        
-        function drawOverlayCell(gridX, gridY, color) {
-            if (!paintOverlayCanvas || !paintOverlayCtx) return;
-            
-            // Convert grid coordinates to screen coordinates
-            const screenCoords = gridToScreen(gridX, gridY);
-            if (!screenCoords) return;
-            
-            const cellSize = getCellSizeOnScreen();
-            if (cellSize < 1) return; // Too small to see
-            
-            paintOverlayCtx.fillStyle = color;
-            paintOverlayCtx.fillRect(
-                screenCoords.x - cellSize / 2,
-                screenCoords.y - cellSize / 2,
-                cellSize,
-                cellSize
-            );
-        }
-        
-        function gridToScreen(gridX, gridY) {
-            try {
-                const lngLat = gridToLngLat(gridX, gridY);
-                const point = map.project([lngLat.lng, lngLat.lat]);
-                return { x: point.x, y: point.y };
-            } catch (e) {
-                return null;
-            }
-        }
-        
-        function getCellSizeOnScreen() {
-            try {
-                // Get the size of one cell in screen pixels
-                const center = map.getCenter();
-                const centerPoint = map.project(center);
-                const cellLngLat = lngLatToGrid(center.lng, center.lat);
-                const adjacentLngLat = gridToLngLat(cellLngLat.x + 1, cellLngLat.y);
-                const adjacentPoint = map.project([adjacentLngLat.lng, adjacentLngLat.lat]);
-                return Math.abs(adjacentPoint.x - centerPoint.x);
-            } catch (e) {
-                return 1;
-            }
-        }
-        
-        function clearOverlay() {
-            if (!paintOverlayCanvas || !paintOverlayCtx) return;
-            paintOverlayCtx.clearRect(0, 0, paintOverlayCanvas.width, paintOverlayCanvas.height);
-            overlayPaintedCells.clear();
-        }
-        
-        function redrawOverlay() {
-            if (!paintOverlayCanvas || !paintOverlayCtx) return;
-            
-            // Clear and redraw all overlay cells
-            paintOverlayCtx.clearRect(0, 0, paintOverlayCanvas.width, paintOverlayCanvas.height);
-            
-            overlayPaintedCells.forEach((cell, cellKey) => {
-                drawOverlayCell(cell.gridX, cell.gridY, cell.color);
-            });
-        }
-        
-        function removeFromOverlay(gridX, gridY) {
-            const cellKey = `${gridX},${gridY}`;
-            overlayPaintedCells.delete(cellKey);
-            redrawOverlay();
-        }
 
         // Zoom so that the larger dimension shows exactly 4000 cells (with slight epsilon to avoid rounding flicker)
         function zoomToTargetVisibleCells(target = 4000) {
@@ -2553,8 +2391,6 @@
             updateGrid();
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
-            // Redraw overlay to match new zoom level
-            redrawOverlay();
             // Throttled notice when zoomed out beyond painting capability
             const vc = getVisibleGridCells();
             if (vc.x > 4000 || vc.y > 4000) {
@@ -2579,8 +2415,6 @@
         map.on('move', () => {
             updatePaintedCellsVisibility();
             updateZoomHintVisibility();
-            // Redraw overlay to match new position
-            redrawOverlay();
             // Keep HTML overlay aligned with current hovered cell during pan/zoom
             if (currentHoveredCell) {
                 updateHtmlHighlight(currentHoveredCell.x, currentHoveredCell.y);
