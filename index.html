@@ -1434,7 +1434,9 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.delete(cellKey);
-              removePaintedCellOverlay(cellKey); // INSTANT overlay removal
+              if (overlayPerformanceMode !== 'map-only') {
+                  removePaintedCellOverlay(cellKey); // INSTANT overlay removal
+              }
               pendingVisualUpdates.add(cellKey);
               
               // RESTORE CHARGE when erasing own paint
@@ -1471,7 +1473,9 @@
               
               // INSTANT local update - IMMEDIATE visual feedback
               paintedCells.set(cellKey, { color, owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR });
-              updatePaintedCellOverlay(cellKey, gridX, gridY, color); // INSTANT overlay update
+              if (overlayPerformanceMode !== 'map-only') {
+                  updatePaintedCellOverlay(cellKey, gridX, gridY, color); // INSTANT overlay update
+              }
               pendingVisualUpdates.add(cellKey);
               
               // Spend charge locally
@@ -1502,7 +1506,9 @@
               
               // Update all pending cells at once - now using instant overlays
               updatePaintedCellsDisplay(); // Keep for fallback/map rendering
-              updateAllPaintedCellOverlays(); // INSTANT overlay updates
+              if (overlayPerformanceMode !== 'map-only') {
+                  updateAllPaintedCellOverlays(); // INSTANT overlay updates
+              }
               updateCellCounter();
               
               // Clear pending updates
@@ -1599,6 +1605,12 @@
         // INSTANT PAINTED CELLS SYSTEM - HTML overlays for instant visual feedback
         let paintedCellOverlays = new Map(); // cellKey -> HTML element
         let paintedOverlayContainer = null; // Container for all painted cell overlays
+        let overlayUpdateThrottle = null; // Throttle overlay updates during map movement
+        let lastOverlayUpdate = 0;
+        const OVERLAY_UPDATE_THROTTLE = 16; // ~60fps max
+        let overlayPerformanceMode = 'auto'; // 'auto', 'overlays', 'map-only'
+        let overlayUpdateCount = 0;
+        let lastPerformanceCheck = 0;
         
         function updateHighlight() {
             // Direct coordinate calculation that works even before map loads
@@ -1680,8 +1692,10 @@
                                     owner_avatar: USER_AVATAR 
                                 });
                                 
-                                // INSTANT overlay update
-                                updatePaintedCellOverlay(cellKey, cell.x, cell.y, selectedColor);
+                                // INSTANT overlay update (if performance allows)
+                                if (overlayPerformanceMode !== 'map-only') {
+                                    updatePaintedCellOverlay(cellKey, cell.x, cell.y, selectedColor);
+                                }
                                 
                                 // Queue for database (no await)
                                 paintQueue.set(cellKey, { 
@@ -1728,7 +1742,9 @@
                             if (existingCell && existingCell.owner === USER_ID) {
                                                         // INSTANT local update
                         paintedCells.delete(cellKey);
-                        removePaintedCellOverlay(cellKey); // INSTANT overlay removal
+                        if (overlayPerformanceMode !== 'map-only') {
+                            removePaintedCellOverlay(cellKey); // INSTANT overlay removal
+                        }
                                 
                                 // Restore charge immediately
                                 if (USER_CHARGES < USER_CAPACITY) {
@@ -1829,18 +1845,6 @@
                 if (!overlay) return;
             }
             
-            // Check if viewport has too many cells - hide overlays when zoomed out
-            try {
-                const visibleCells = getVisibleGridCells();
-                const totalVisibleCells = visibleCells.x * visibleCells.y;
-                if (totalVisibleCells > HOVER_THRESHOLD * HOVER_THRESHOLD) {
-                    overlay.style.display = 'none';
-                    return;
-                }
-            } catch (e) {
-                // If we can't calculate, assume we should show it
-            }
-            
             try {
                 // Compute cell corners in EPSG:3857 then convert to lng/lat
                 const mercatorX1 = (gridX * CELL_SIZE_METERS) - 20037508.34;
@@ -1860,11 +1864,26 @@
                 const width = Math.max(1, Math.abs(p3.x - p1.x));
                 const height = Math.max(1, Math.abs(p3.y - p1.y));
 
-                overlay.style.transform = `translate(${left}px, ${top}px)`;
-                overlay.style.width = `${width}px`;
-                overlay.style.height = `${height}px`;
-                overlay.style.backgroundColor = color;
-                overlay.style.display = 'block';
+                // Only update if values changed to reduce DOM manipulation
+                const currentTransform = `translate(${left}px, ${top}px)`;
+                const currentWidth = `${width}px`;
+                const currentHeight = `${height}px`;
+                
+                if (overlay.style.transform !== currentTransform) {
+                    overlay.style.transform = currentTransform;
+                }
+                if (overlay.style.width !== currentWidth) {
+                    overlay.style.width = currentWidth;
+                }
+                if (overlay.style.height !== currentHeight) {
+                    overlay.style.height = currentHeight;
+                }
+                if (overlay.style.backgroundColor !== color) {
+                    overlay.style.backgroundColor = color;
+                }
+                if (overlay.style.display !== 'block') {
+                    overlay.style.display = 'block';
+                }
             } catch (e) {
                 // If projection unavailable, hide the overlay
                 overlay.style.display = 'none';
@@ -1879,12 +1898,108 @@
             }
         }
 
+        function getVisiblePaintedCells() {
+            try {
+                const visibleCells = getVisibleGridCells();
+                const totalVisibleCells = visibleCells.x * visibleCells.y;
+                
+                // If too many cells visible, return empty array (hide overlays)
+                if (totalVisibleCells > HOVER_THRESHOLD * HOVER_THRESHOLD) {
+                    return [];
+                }
+                
+                // Get current viewport bounds
+                const bounds = map.getBounds();
+                const minLng = bounds.getWest();
+                const maxLng = bounds.getEast();
+                const minLat = bounds.getSouth();
+                const maxLat = bounds.getNorth();
+                
+                // Convert to grid coordinates with some padding
+                const padding = 2; // Show cells slightly outside viewport
+                const minGridX = Math.max(0, Math.floor((minLng * 20037508.34 / 180 + 20037508.34) / CELL_SIZE_METERS) - padding);
+                const maxGridX = Math.min(1999999, Math.ceil((maxLng * 20037508.34 / 180 + 20037508.34) / CELL_SIZE_METERS) + padding);
+                const minGridY = Math.max(0, Math.floor((Math.log(Math.tan((90 + minLat) * Math.PI / 360)) / (Math.PI / 180) * 20037508.34 / 180 + 20037508.34) / CELL_SIZE_METERS) - padding);
+                const maxGridY = Math.min(1999999, Math.ceil((Math.log(Math.tan((90 + maxLat) * Math.PI / 360)) / (Math.PI / 180) * 20037508.34 / 180 + 20037508.34) / CELL_SIZE_METERS) + padding);
+                
+                const visiblePaintedCells = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [gridX, gridY] = cellKey.split(',').map(Number);
+                    if (gridX >= minGridX && gridX <= maxGridX && gridY >= minGridY && gridY <= maxGridY) {
+                        visiblePaintedCells.push({ cellKey, gridX, gridY, cell });
+                    }
+                });
+                
+                return visiblePaintedCells;
+            } catch (e) {
+                // Fallback: return all cells if calculation fails
+                const result = [];
+                paintedCells.forEach((cell, cellKey) => {
+                    const [gridX, gridY] = cellKey.split(',').map(Number);
+                    result.push({ cellKey, gridX, gridY, cell });
+                });
+                return result;
+            }
+        }
+
+        function checkOverlayPerformance() {
+            const now = Date.now();
+            if (now - lastPerformanceCheck < 5000) return; // Check every 5 seconds
+            lastPerformanceCheck = now;
+            
+            // If we have too many overlays or updates are too frequent, switch to map-only mode
+            if (paintedCellOverlays.size > 1000 || overlayUpdateCount > 100) {
+                if (overlayPerformanceMode !== 'map-only') {
+                    console.log('Switching to map-only mode for better performance');
+                    overlayPerformanceMode = 'map-only';
+                    // Hide all overlays
+                    paintedCellOverlays.forEach((overlay) => {
+                        overlay.style.display = 'none';
+                    });
+                }
+            } else if (paintedCellOverlays.size < 500 && overlayUpdateCount < 50) {
+                // Switch back to overlay mode if performance is good
+                if (overlayPerformanceMode !== 'overlays') {
+                    console.log('Switching back to overlay mode');
+                    overlayPerformanceMode = 'overlays';
+                }
+            }
+            
+            overlayUpdateCount = 0; // Reset counter
+        }
+
         function updateAllPaintedCellOverlays() {
             if (!paintedOverlayContainer) createPaintedOverlayContainer();
             if (!paintedOverlayContainer) return;
             
-            paintedCells.forEach((cell, cellKey) => {
-                const [gridX, gridY] = cellKey.split(',').map(Number);
+            // Check performance and potentially switch modes
+            checkOverlayPerformance();
+            
+            // Skip overlay updates if in map-only mode
+            if (overlayPerformanceMode === 'map-only') {
+                return;
+            }
+            
+            // Throttle updates to prevent lag
+            const now = Date.now();
+            if (now - lastOverlayUpdate < OVERLAY_UPDATE_THROTTLE) {
+                if (overlayUpdateThrottle) clearTimeout(overlayUpdateThrottle);
+                overlayUpdateThrottle = setTimeout(updateAllPaintedCellOverlays, OVERLAY_UPDATE_THROTTLE);
+                return;
+            }
+            lastOverlayUpdate = now;
+            overlayUpdateCount++;
+            
+            // Get only visible painted cells
+            const visiblePaintedCells = getVisiblePaintedCells();
+            
+            // Hide all overlays first
+            paintedCellOverlays.forEach((overlay) => {
+                overlay.style.display = 'none';
+            });
+            
+            // Show and position only visible cells
+            visiblePaintedCells.forEach(({ cellKey, gridX, gridY, cell }) => {
                 updatePaintedCellOverlay(cellKey, gridX, gridY, cell.color);
             });
         }
@@ -2570,7 +2685,7 @@
             if (currentHoveredCell) {
                 updateHtmlHighlight(currentHoveredCell.x, currentHoveredCell.y);
             }
-            // Keep all painted cell overlays aligned during pan/zoom
+            // Keep all painted cell overlays aligned during pan/zoom (throttled)
             updateAllPaintedCellOverlays();
         });
 
