@@ -1493,18 +1493,18 @@
         
         // Process visual updates in a single batch
         function processVisualUpdates() {
-              if (pendingVisualUpdates.size === 0) {
-                  visualUpdateScheduled = false;
-                  return;
-              }
-              
-              // Update all pending cells at once
-              updatePaintedCellsDisplay();
-              updateCellCounter();
-              
-              // Clear pending updates
-              pendingVisualUpdates.clear();
-              visualUpdateScheduled = false;
+            if (pendingVisualUpdates.size === 0) {
+                visualUpdateScheduled = false;
+                return;
+            }
+            
+            // Process all pending updates in one go
+            updatePaintedCellsDisplay();
+            updateCellCounter();
+            
+            // Clear pending updates
+            pendingVisualUpdates.clear();
+            visualUpdateScheduled = false;
         }
             
             function schedulePaintBatch() {
@@ -2137,61 +2137,69 @@
                 return cell ? cell.color : null;
         }
         
-        // Cache for cell features to avoid regenerating them
-        const cellFeaturesCache = new Map();
+        // Optimized painted cells rendering
+        let lastPaintedCells = new Map();
         
         function updatePaintedCellsDisplay() {
             if (!map.getSource('painted-cells')) return;
             
-            // Get the current source data or initialize it
-            const source = map.getSource('painted-cells');
-            const currentData = source._data || { type: 'FeatureCollection', features: [] };
-            const currentFeatures = new Map(currentData.features.map(f => [f.id, f]));
+            // Only update if cells have changed
+            let needsUpdate = false;
             
-            // Track which cells we've processed
-            const processedCells = new Set();
-            const updatedFeatures = [];
+            // Check for changes in cell states
+            if (paintedCells.size !== lastPaintedCells.size) {
+                needsUpdate = true;
+            } else {
+                for (const [key, cell] of paintedCells.entries()) {
+                    const lastCell = lastPaintedCells.get(key);
+                    if (!lastCell || lastCell.color !== cell.color) {
+                        needsUpdate = true;
+                        break;
+                    }
+                }
+            }
             
-            // Update or add features
-            for (const [cellKey, cell] of paintedCells.entries()) {
-                const [x, y] = cellKey.split(',').map(Number);
-                const cellId = `${x},${y}`;
+            if (!needsUpdate) return;
+            
+            // Batch update all cells at once
+            const features = [];
+            const batchSize = 1000; // Process in batches to prevent UI freeze
+            let processed = 0;
+            
+            const processBatch = (startIdx) => {
+                const batchEnd = Math.min(startIdx + batchSize, paintedCells.size);
+                let i = 0;
                 
-                // Check if we need to update this cell
-                const cachedFeature = cellFeaturesCache.get(cellId);
-                if (!cachedFeature || cachedFeature.properties.color !== cell.color) {
-                    // Generate new feature and cache it
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    cellFeature.id = cellId;
-                    cellFeaturesCache.set(cellId, cellFeature);
-                    updatedFeatures.push(cellFeature);
+                for (const [cellKey, cell] of paintedCells.entries()) {
+                    if (i >= startIdx && i < batchEnd) {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        const cellFeature = generateHoverCell(x, y);
+                        cellFeature.properties.color = cell.color;
+                        features.push(cellFeature);
+                    }
+                    i++;
+                }
+                
+                // Update the source with the current batch
+                if (features.length > 0) {
+                    map.getSource('painted-cells').setData({
+                        type: 'FeatureCollection',
+                        features: features
+                    });
+                }
+                
+                // Process next batch if needed
+                processed = batchEnd;
+                if (processed < paintedCells.size) {
+                    setTimeout(() => processBatch(processed), 0);
                 } else {
-                    updatedFeatures.push(cachedFeature);
+                    // Update the last known state
+                    lastPaintedCells = new Map(paintedCells);
                 }
-                processedCells.add(cellId);
-            }
+            };
             
-            // Remove features that are no longer in paintedCells
-            const removedFeatures = [];
-            for (const [cellId, feature] of cellFeaturesCache.entries()) {
-                if (!paintedCells.has(cellId)) {
-                    removedFeatures.push(cellId);
-                }
-            }
-            
-            // Remove deleted features from cache
-            for (const cellId of removedFeatures) {
-                cellFeaturesCache.delete(cellId);
-            }
-            
-            // Only update if there are changes
-            if (updatedFeatures.length > 0 || removedFeatures.length > 0) {
-                source.setData({
-                    type: 'FeatureCollection',
-                    features: updatedFeatures
-                });
-            }
+            // Start processing first batch
+            processBatch(0);
         }
         
         function updateCellCounter() {
