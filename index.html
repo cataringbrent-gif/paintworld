@@ -1260,15 +1260,48 @@
 
             async function initialLoad() {
               if (!supabase) return;
-              const { data, error } = await supabase
-                .from('paints')
-                .select('*')
-                .order('updated_at', { ascending: true });
-              if (error) { console.error('Initial load error', error); return; }
-              paintedCells.clear();
-              for (const row of data) mergeRow(row);
-              updatePaintedCellsDisplay();
-              updateCellCounter();
+              
+              // Show loading indicator
+              const loadingMsg = 'Loading your artwork...';
+              showNotification(loadingMsg);
+              
+              try {
+                const { data, error } = await supabase
+                  .from('paints')
+                  .select('*')
+                  .order('updated_at', { ascending: true });
+                  
+                if (error) { 
+                  console.error('Initial load error', error); 
+                  showNotification('Failed to load artwork');
+                  return; 
+                }
+                
+                // Clear existing cells
+                paintedCells.clear();
+                
+                // Batch process all rows
+                const batchSize = 1000; // Process in chunks to avoid UI freeze
+                for (let i = 0; i < data.length; i += batchSize) {
+                  const batch = data.slice(i, i + batchSize);
+                  batch.forEach(row => mergeRow(row));
+                  
+                  // Update UI in chunks to keep it responsive
+                  if (i % 5000 === 0 || i + batchSize >= data.length) {
+                    updatePaintedCellsDisplay();
+                    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI thread
+                  }
+                }
+                
+                // Final update
+                updatePaintedCellsDisplay();
+                updateCellCounter();
+                showNotification(`Loaded ${data.length} cells`, 2000);
+                
+              } catch (err) {
+                console.error('Error in initialLoad:', err);
+                showNotification('Error loading artwork');
+              }
             }
 
             let lastSeen = new Date(0).toISOString();
@@ -1408,15 +1441,12 @@
               });
             });
 
-                    // ULTRA-FAST PAINTING SYSTEM - Optimized for performance
+                    // ULTRA-FAST PAINTING SYSTEM - Instant local updates, batched DB writes
         let paintQueue = new Map(); // cellKey -> {gridX, gridY, color, timestamp}
         let paintBatchTimeout = null;
-        const PAINT_BATCH_DELAY = 50; // ms - Balanced between responsiveness and batching
-        const MAX_BATCH_SIZE = 100; // Maximum number of updates per batch
+        const PAINT_BATCH_DELAY = 50; // ms - Increased for better batching
         let pendingVisualUpdates = new Set(); // Track cells that need visual updates
         let visualUpdateScheduled = false;
-        let lastBatchTime = 0;
-        const MIN_BATCH_INTERVAL = 200; // Minimum time between batch operations (ms)
         
         // INSTANT PAINTING - No database calls during painting
         function paintCell(gridX, gridY, color) {
@@ -1511,93 +1541,52 @@
         }
             
             function schedulePaintBatch() {
-              const now = Date.now();
-              const timeSinceLastBatch = now - lastBatchTime;
-              const remainingTime = Math.max(0, MIN_BATCH_INTERVAL - timeSinceLastBatch);
-              
-              // Process immediately if we've reached max batch size or it's been a while
-              if (paintQueue.size >= MAX_BATCH_SIZE || remainingTime <= 0) {
-                if (paintBatchTimeout) {
-                    clearTimeout(paintBatchTimeout);
-                    paintBatchTimeout = null;
-                }
-                processPaintBatch();
-                return;
-              }
-              
-              // Otherwise schedule with the remaining time
               if (paintBatchTimeout) clearTimeout(paintBatchTimeout);
-              paintBatchTimeout = setTimeout(processPaintBatch, Math.min(remainingTime, PAINT_BATCH_DELAY));
+              paintBatchTimeout = setTimeout(processPaintBatch, PAINT_BATCH_DELAY);
             }
             
             async function processPaintBatch() {
-              if (!supabase || paintQueue.size === 0) return;
+              if (paintQueue.size === 0) return;
               
-              lastBatchTime = Date.now();
               const batch = Array.from(paintQueue.values());
               paintQueue.clear();
               
-              try {
-                // Group updates by operation type (insert/update/delete)
-                const updates = batch.filter(u => u.color !== null);
-                const deletes = batch.filter(u => u.color === null);
+              // Process deletes
+              const deletes = batch.filter(p => p.color === null);
+              if (deletes.length > 0) {
+                for (const del of deletes) {
+                  await supabase.from('paints').delete().eq('x', del.gridX).eq('y', del.gridY);
+                }
                 
-                // Process deletes in a single operation if any
-                if (deletes.length > 0) {
-                  const { error: deleteError } = await supabase
-                      .from('paints')
-                      .delete()
-                      .in('x,y', deletes.map(d => [d.gridX, d.gridY]));
-                  
-                  if (deleteError) throw deleteError;
+                // Update charges for deletions that restore charges
+                const chargeRestores = deletes.filter(p => p.restoreCharge).length;
+                if (chargeRestores > 0) {
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
                 }
-                // Process updates in chunks
-                if (updates.length > 0) {
-                  const CHUNK_SIZE = 100; // Process in chunks to avoid large requests
-                  for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
-                    const chunk = updates.slice(i, i + CHUNK_SIZE);
-                    const upserts = chunk.map(p => ({
-                      x: p.gridX, 
-                      y: p.gridY, 
-                      color: p.color,
-                      owner: USER_ID, 
-                      owner_name: USER_NAME, 
-                      owner_avatar: USER_AVATAR,
-                      updated_at: new Date().toISOString()
-                    }));
-                    
-                    const { error } = await supabase
-                      .from('paints')
-                      .upsert(upserts, { onConflict: 'x,y' });
-                    
-                    if (error) throw error;
-                  }
-                }
+              }
+              
+              // Process paints
+              const paints = batch.filter(p => p.color !== null);
+              if (paints.length > 0) {
+                const upserts = paints.map(p => ({
+                  x: p.gridX, y: p.gridY, color: p.color,
+                  owner: USER_ID, owner_name: USER_NAME, owner_avatar: USER_AVATAR
+                }));
+                await supabase.from('paints').upsert(upserts, { onConflict: 'x,y' });
                 
                 // Update charges in batch
-                const chargeSpends = updates.filter(p => p.spendCharge).length;
+                const chargeSpends = paints.filter(p => p.spendCharge).length;
                 if (chargeSpends > 0) {
-                  await supabase.from('user_paints')
-                    .update({
-                      charges: USER_CHARGES,
-                      last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
-                      capacity: USER_CAPACITY
-                    })
-                    .eq('user_id', USER_ID);
+                  await supabase.from('user_paints').update({
+                    charges: USER_CHARGES,
+                    last_refill_at: lastRefillAt ? new Date(lastRefillAt).toISOString() : null,
+                    capacity: USER_CAPACITY
+                  }).eq('user_id', USER_ID);
                 }
-                
-                // Update visual updates after successful DB operation
-                updateVisuals();
-              } catch (error) {
-                console.error('Error processing paint batch:', error);
-                // Requeue failed updates with exponential backoff
-                setTimeout(() => {
-                  batch.forEach(update => {
-                    const key = `${update.gridX},${update.gridY}`;
-                    paintQueue.set(key, update);
-                  });
-                  schedulePaintBatch();
-                }, 1000); // Wait 1 second before retrying
               }
             }
             const map = new maplibregl.Map({
@@ -2182,27 +2171,59 @@
         }
         
         function updatePaintedCellsDisplay() {
-                if (!map.getSource('painted-cells')) return;
-                const features = [];
-                paintedCells.forEach((cell, cellKey) => {
-                    const [x, y] = cellKey.split(',').map(Number);
-                    const cellFeature = generateHoverCell(x, y);
-                    cellFeature.properties.color = cell.color;
-                    features.push(cellFeature);
-                });
-                map.getSource('painted-cells').setData({
-                    type: 'FeatureCollection',
-                    features: features
-                });
+                try {
+                    const source = map.getSource('painted-cells');
+                    if (!source) return;
+                    
+                    // Only update if we have cells to display
+                    if (paintedCells.size === 0) {
+                        source.setData({
+                            type: 'FeatureCollection',
+                            features: []
+                        });
+                        return;
+                    }
+                    
+                    // Batch process features to avoid UI freeze
+                    const features = [];
+                    let count = 0;
+                    const batchSize = 5000; // Process in smaller batches
+                    
+                    for (const [cellKey, cell] of paintedCells.entries()) {
+                        const [x, y] = cellKey.split(',').map(Number);
+                        const cellFeature = generateHoverCell(x, y);
+                        cellFeature.properties.color = cell.color;
+                        features.push(cellFeature);
+                        
+                        // Update in batches to keep UI responsive
+                        if (++count % batchSize === 0) {
+                            source.setData({
+                                type: 'FeatureCollection',
+                                features: features.slice() // Send a copy of current features
+                            });
+                            // Small delay to allow UI to process
+                            return new Promise(resolve => {
+                                setTimeout(() => {
+                                    updatePaintedCellsDisplay();
+                                    resolve();
+                                }, 50);
+                            });
+                        }
+                    }
+                    
+                    // Final update with all features
+                    source.setData({
+                        type: 'FeatureCollection',
+                        features: features
+                    });
+                    
+                } catch (error) {
+                    console.error('Error updating painted cells:', error);
+                }
         }
         
         function updateCellCounter() {
             // No number needed, just keep the button text as 'Paint'
-        }
-        
-        function showNotification(message) {
-            // Notifications disabled: no-op
-            return;
         }
         
         function checkPaintingEnabled() {
