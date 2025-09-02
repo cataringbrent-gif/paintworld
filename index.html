@@ -1260,48 +1260,15 @@
 
             async function initialLoad() {
               if (!supabase) return;
-              
-              // Show loading indicator
-              const loadingMsg = 'Loading your artwork...';
-              showNotification(loadingMsg);
-              
-              try {
-                const { data, error } = await supabase
-                  .from('paints')
-                  .select('*')
-                  .order('updated_at', { ascending: true });
-                  
-                if (error) { 
-                  console.error('Initial load error', error); 
-                  showNotification('Failed to load artwork');
-                  return; 
-                }
-                
-                // Clear existing cells
-                paintedCells.clear();
-                
-                // Batch process all rows
-                const batchSize = 1000; // Process in chunks to avoid UI freeze
-                for (let i = 0; i < data.length; i += batchSize) {
-                  const batch = data.slice(i, i + batchSize);
-                  batch.forEach(row => mergeRow(row));
-                  
-                  // Update UI in chunks to keep it responsive
-                  if (i % 5000 === 0 || i + batchSize >= data.length) {
-                    updatePaintedCellsDisplay();
-                    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI thread
-                  }
-                }
-                
-                // Final update
-                updatePaintedCellsDisplay();
-                updateCellCounter();
-                showNotification(`Loaded ${data.length} cells`, 2000);
-                
-              } catch (err) {
-                console.error('Error in initialLoad:', err);
-                showNotification('Error loading artwork');
-              }
+              const { data, error } = await supabase
+                .from('paints')
+                .select('*')
+                .order('updated_at', { ascending: true });
+              if (error) { console.error('Initial load error', error); return; }
+              paintedCells.clear();
+              for (const row of data) mergeRow(row);
+              updatePaintedCellsDisplay();
+              updateCellCounter();
             }
 
             let lastSeen = new Date(0).toISOString();
@@ -2170,60 +2137,70 @@
                 return cell ? cell.color : null;
         }
         
+        // Cache for cell features to avoid regenerating them
+        const cellFeaturesCache = new Map();
+        
         function updatePaintedCellsDisplay() {
-                try {
-                    const source = map.getSource('painted-cells');
-                    if (!source) return;
-                    
-                    // Only update if we have cells to display
-                    if (paintedCells.size === 0) {
-                        source.setData({
-                            type: 'FeatureCollection',
-                            features: []
-                        });
-                        return;
-                    }
-                    
-                    // Batch process features to avoid UI freeze
-                    const features = [];
-                    let count = 0;
-                    const batchSize = 5000; // Process in smaller batches
-                    
-                    for (const [cellKey, cell] of paintedCells.entries()) {
-                        const [x, y] = cellKey.split(',').map(Number);
-                        const cellFeature = generateHoverCell(x, y);
-                        cellFeature.properties.color = cell.color;
-                        features.push(cellFeature);
-                        
-                        // Update in batches to keep UI responsive
-                        if (++count % batchSize === 0) {
-                            source.setData({
-                                type: 'FeatureCollection',
-                                features: features.slice() // Send a copy of current features
-                            });
-                            // Small delay to allow UI to process
-                            return new Promise(resolve => {
-                                setTimeout(() => {
-                                    updatePaintedCellsDisplay();
-                                    resolve();
-                                }, 50);
-                            });
-                        }
-                    }
-                    
-                    // Final update with all features
-                    source.setData({
-                        type: 'FeatureCollection',
-                        features: features
-                    });
-                    
-                } catch (error) {
-                    console.error('Error updating painted cells:', error);
+            if (!map.getSource('painted-cells')) return;
+            
+            // Get the current source data or initialize it
+            const source = map.getSource('painted-cells');
+            const currentData = source._data || { type: 'FeatureCollection', features: [] };
+            const currentFeatures = new Map(currentData.features.map(f => [f.id, f]));
+            
+            // Track which cells we've processed
+            const processedCells = new Set();
+            const updatedFeatures = [];
+            
+            // Update or add features
+            for (const [cellKey, cell] of paintedCells.entries()) {
+                const [x, y] = cellKey.split(',').map(Number);
+                const cellId = `${x},${y}`;
+                
+                // Check if we need to update this cell
+                const cachedFeature = cellFeaturesCache.get(cellId);
+                if (!cachedFeature || cachedFeature.properties.color !== cell.color) {
+                    // Generate new feature and cache it
+                    const cellFeature = generateHoverCell(x, y);
+                    cellFeature.properties.color = cell.color;
+                    cellFeature.id = cellId;
+                    cellFeaturesCache.set(cellId, cellFeature);
+                    updatedFeatures.push(cellFeature);
+                } else {
+                    updatedFeatures.push(cachedFeature);
                 }
+                processedCells.add(cellId);
+            }
+            
+            // Remove features that are no longer in paintedCells
+            const removedFeatures = [];
+            for (const [cellId, feature] of cellFeaturesCache.entries()) {
+                if (!paintedCells.has(cellId)) {
+                    removedFeatures.push(cellId);
+                }
+            }
+            
+            // Remove deleted features from cache
+            for (const cellId of removedFeatures) {
+                cellFeaturesCache.delete(cellId);
+            }
+            
+            // Only update if there are changes
+            if (updatedFeatures.length > 0 || removedFeatures.length > 0) {
+                source.setData({
+                    type: 'FeatureCollection',
+                    features: updatedFeatures
+                });
+            }
         }
         
         function updateCellCounter() {
             // No number needed, just keep the button text as 'Paint'
+        }
+        
+        function showNotification(message) {
+            // Notifications disabled: no-op
+            return;
         }
         
         function checkPaintingEnabled() {
